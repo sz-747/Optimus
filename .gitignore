@@ -1,0 +1,27 @@
+# ── Read-only macOS reference clone (its own git repo; not part of this project) ──
+/cmux/
+
+# ── Rust ──
+/engine/target/
+**/target/
+Cargo.lock.orig
+
+# ── .NET / C# ──
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+.vs/
+
+# ── csbindgen generated output is checked in deliberately (see plan §6); do NOT ignore NativeMethods.g.cs ──
+
+# ── Build output staging ──
+/build/out/
+
+# ── Agent worktrees (ce-work parallel isolation) ──
+.claude/worktrees/
+
+# ── Misc ──
+*.log
+Thumbs.db
+.DS_Store
