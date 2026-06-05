@@ -19,6 +19,36 @@ use super::grid::{QuadInstance, QuadLayer};
 use super::text::{Span, TextLayer};
 use super::{PanelRenderer, RenderError};
 
+/// Selection highlight color, linear RGBA (translucent — drawn behind glyphs).
+const SELECTION_COLOR: [f32; 4] = [0.20, 0.40, 0.85, 0.40];
+
+/// A normalized text selection in stable-row coordinates (survives scrolling/output).
+///
+/// `start` precedes `end` in (row, col) order; `end_col` is inclusive (the last selected cell).
+#[derive(Clone, Copy)]
+pub struct SelectionSpan {
+    pub start_row: i64,
+    pub start_col: usize,
+    pub end_row: i64,
+    pub end_col: usize,
+}
+
+impl SelectionSpan {
+    /// The exclusive column range selected on stable row `stable` (clamped by the caller to
+    /// the grid width). The inclusive `end_col` becomes an exclusive `+1`.
+    pub fn column_range(&self, stable: i64, cols: usize) -> (usize, usize) {
+        if self.start_row == self.end_row {
+            (self.start_col, self.end_col + 1)
+        } else if stable == self.start_row {
+            (self.start_col, cols)
+        } else if stable == self.end_row {
+            (0, self.end_col + 1)
+        } else {
+            (0, cols)
+        }
+    }
+}
+
 pub struct TerminalRenderer {
     panel: PanelRenderer,
     quads: QuadLayer,
@@ -63,6 +93,7 @@ impl TerminalRenderer {
         terminal: &Terminal,
         scroll_offset: usize,
         cursor_blink_on: bool,
+        selection: Option<SelectionSpan>,
     ) -> Result<(), RenderError> {
         let (cell_w, cell_h) = self.text.cell_size();
         let (surf_w, surf_h) = self.panel.size();
@@ -138,6 +169,24 @@ impl TerminalRenderer {
                 for w in 1..cell.width() {
                     if col + w < cols {
                         glyphs[col + w] = String::new();
+                    }
+                }
+            }
+
+            // Selection highlight (translucent, drawn over backgrounds and under glyphs).
+            if let Some(sel) = &selection {
+                let stable = screen.phys_to_stable_row_index(start + r) as i64;
+                if stable >= sel.start_row && stable <= sel.end_row {
+                    let (c0, c1) = sel.column_range(stable, cols);
+                    let c1 = c1.min(cols);
+                    if c1 > c0 {
+                        quads.push(QuadInstance::new(
+                            c0 as f32 * cell_w,
+                            y,
+                            (c1 - c0) as f32 * cell_w,
+                            cell_h,
+                            SELECTION_COLOR,
+                        ));
                     }
                 }
             }

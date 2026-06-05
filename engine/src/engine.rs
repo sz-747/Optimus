@@ -16,7 +16,7 @@ use wezterm_term::{Terminal, TerminalSize};
 
 use crate::ffi::events::{event_kind, EngineOptions, EventSink};
 use crate::pty::{default_shell, ConPty};
-use crate::render::terminal::TerminalRenderer;
+use crate::render::terminal::{SelectionSpan, TerminalRenderer};
 use crate::vt::{build_terminal, SharedSink};
 
 /// A raw COM pointer moved to the render thread. The `SwapChainPanel`'s native interface is
@@ -277,7 +277,29 @@ struct RenderState {
     /// reset to 0 when fresh PTY output arrives so new text is always visible.
     scroll_offset: usize,
 
+    /// Active drag-selection (anchored in stable-row coordinates so it survives scrolling).
+    selection: Option<Selection>,
+
     needs_present: bool,
+}
+
+/// A drag-selection. Endpoints are `(stable_row, column)`; `stable_row` is wezterm's
+/// scrollback-stable index so the selection tracks the same text as content scrolls.
+#[derive(Clone, Copy)]
+struct Selection {
+    anchor: (i64, usize),
+    head: (i64, usize),
+    /// True while the pointer button is held (drag in progress).
+    active: bool,
+}
+
+/// Order two `(row, col)` points so the earlier (top-left) comes first.
+fn order_points(a: (i64, usize), b: (i64, usize)) -> ((i64, usize), (i64, usize)) {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
 
 /// The render thread's main loop: drain commands (coalescing redraws), present once per burst.
@@ -301,6 +323,7 @@ fn render_loop(
         pixel_height: 0,
         dpi: 96,
         scroll_offset: 0,
+        selection: None,
         needs_present: false,
     };
 
@@ -401,8 +424,14 @@ impl RenderState {
                     }
                 }
             }
-            RenderCmd::SendMouse { .. } => {
-                // U8: drag-selection + mouse reporting. Wired in the selection unit.
+            RenderCmd::SendMouse {
+                x,
+                y,
+                button,
+                kind,
+                ..
+            } => {
+                self.handle_mouse(x, y, button, kind);
             }
             RenderCmd::SendScroll { delta_lines } => {
                 // Positive delta scrolls toward history (older), negative toward the bottom.
@@ -432,8 +461,7 @@ impl RenderState {
                 let _ = reply.send(self.resize(cols, rows, pixel_width, pixel_height, dpi_scale));
             }
             RenderCmd::SelectionText(reply) => {
-                // U8: compute from the current selection range. None for now.
-                let _ = reply.send(None);
+                let _ = reply.send(self.compute_selection_text());
             }
             RenderCmd::ScreenText(reply) => {
                 let text = self.terminal.as_ref().map(dump_screen).unwrap_or_default();
@@ -493,6 +521,7 @@ impl RenderState {
         self.pty = Some(pty);
         self.terminal = Some(terminal);
         self.reader = Some(handle);
+        self.selection = None;
         self.needs_present = true;
         Ok(())
     }
@@ -556,11 +585,128 @@ impl RenderState {
     /// Without a terminal yet, there is nothing to draw (the surface keeps its cleared contents).
     fn present(&mut self) {
         let scroll_offset = self.scroll_offset;
-        if let (Some(renderer), Some(term)) =
-            (self.renderer.as_mut(), self.terminal.as_ref())
-        {
+        let selection = self.normalized_selection_span();
+        if let (Some(renderer), Some(term)) = (self.renderer.as_mut(), self.terminal.as_ref()) {
             // Ignore transient FrameUnavailable (resize/DPI churn); the next burst re-presents.
-            let _ = renderer.render(term, scroll_offset, true);
+            let _ = renderer.render(term, scroll_offset, true, selection);
+        }
+    }
+
+    /// Update the drag-selection from a pointer event (physical pixels, left button only).
+    fn handle_mouse(&mut self, x: f32, y: f32, button: u32, kind: u32) {
+        // 0 = left button; only the left button drives selection in Phase 1.
+        if button != 0 {
+            return;
+        }
+        let (cell_w, cell_h) = match self.renderer.as_ref() {
+            Some(r) => r.cell_size(),
+            None => return,
+        };
+        let col = if cell_w > 0.0 { (x / cell_w).max(0.0) as usize } else { 0 };
+        let rendered_row = if cell_h > 0.0 { (y / cell_h).max(0.0) as usize } else { 0 };
+        let stable = match self.rendered_row_to_stable(rendered_row) {
+            Some(s) => s,
+            None => return,
+        };
+
+        match kind {
+            0 => {
+                // Down: start a new selection anchored here.
+                self.selection = Some(Selection {
+                    anchor: (stable, col),
+                    head: (stable, col),
+                    active: true,
+                });
+                self.needs_present = true;
+            }
+            1 => {
+                // Move: extend the active selection.
+                if let Some(sel) = self.selection.as_mut() {
+                    if sel.active {
+                        sel.head = (stable, col);
+                        self.needs_present = true;
+                    }
+                }
+            }
+            2 => {
+                // Up: finish the drag (keep the selection for copy).
+                if let Some(sel) = self.selection.as_mut() {
+                    sel.active = false;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Map a row index within the currently-rendered viewport (0 = top visible row) to a stable
+    /// scrollback row index.
+    fn rendered_row_to_stable(&self, rendered_row: usize) -> Option<i64> {
+        let term = self.terminal.as_ref()?;
+        let screen = term.screen();
+        let visible = screen.physical_rows;
+        if visible == 0 {
+            return None;
+        }
+        let total = screen.scrollback_rows();
+        let bottom = total.saturating_sub(self.scroll_offset);
+        let start = bottom.saturating_sub(visible);
+        let phys = (start + rendered_row.min(visible - 1)).min(total.saturating_sub(1));
+        Some(screen.phys_to_stable_row_index(phys) as i64)
+    }
+
+    /// The current selection normalized to a top-left → bottom-right span, or `None` when there
+    /// is no selection or it is empty (a click without a drag).
+    fn normalized_selection_span(&self) -> Option<SelectionSpan> {
+        let sel = self.selection?;
+        let (a, b) = order_points(sel.anchor, sel.head);
+        if a == b {
+            return None;
+        }
+        Some(SelectionSpan {
+            start_row: a.0,
+            start_col: a.1,
+            end_row: b.0,
+            end_col: b.1,
+        })
+    }
+
+    /// Extract the selected text (one `\n`-joined line per row, trailing spaces trimmed).
+    fn compute_selection_text(&self) -> Option<String> {
+        let span = self.normalized_selection_span()?;
+        let term = self.terminal.as_ref()?;
+        let screen = term.screen();
+        let cols = screen.physical_cols;
+
+        let mut out = String::new();
+        let mut first = true;
+        for stable in span.start_row..=span.end_row {
+            let phys = match screen.stable_row_to_phys(stable as isize) {
+                Some(p) => p,
+                None => continue, // scrolled off the top of the buffer
+            };
+            let lines = screen.lines_in_phys_range(phys..phys + 1);
+            let line = match lines.first() {
+                Some(l) => l,
+                None => continue,
+            };
+            let (c0, c1) = span.column_range(stable, cols);
+            let c1 = c1.min(cols);
+            let segment = if c1 > c0 {
+                line.columns_as_str(c0..c1)
+            } else {
+                String::new()
+            };
+            if !first {
+                out.push('\n');
+            }
+            out.push_str(segment.trim_end());
+            first = false;
+        }
+
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
         }
     }
 

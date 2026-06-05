@@ -5,6 +5,7 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using Windows.UI.Core;
 
@@ -166,6 +167,25 @@ public sealed partial class TerminalPane : UserControl
             return;
         }
         KeyModifiers mods = CurrentModifiers();
+
+        // Clipboard chords are handled by the host, not forwarded to the shell (plan §8 U8).
+        const KeyModifiers ctrlShift = KeyModifiers.Ctrl | KeyModifiers.Shift;
+        if ((mods & ctrlShift) == ctrlShift)
+        {
+            if (e.Key == VirtualKey.C)
+            {
+                CopySelection();
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == VirtualKey.V)
+            {
+                PasteClipboard();
+                e.Handled = true;
+                return;
+            }
+        }
+
         _engine.SendKey((uint)e.Key, mods, down: true);
 
         // Mark handled for keys the engine encodes itself (named control keys, or anything with
@@ -307,8 +327,18 @@ public sealed partial class TerminalPane : UserControl
             return;
         }
         PointerPoint pp = e.GetCurrentPoint(Panel);
-        (float x, float y) = ToPhysical(pp);
-        _engine.SendMouse(x, y, (uint)ButtonOf(pp), (uint)MouseKind.Up, CurrentModifiers());
+        if (pp.Properties.PointerUpdateKind == PointerUpdateKind.RightButtonReleased)
+        {
+            // Right-click copies the current selection (plan §8 U8).
+            CopySelection();
+        }
+        else
+        {
+            // Finish a left-drag selection (the released button is no longer "pressed",
+            // so address the engine's left-button selection explicitly).
+            (float x, float y) = ToPhysical(pp);
+            _engine.SendMouse(x, y, (uint)MouseButton.Left, (uint)MouseKind.Up, CurrentModifiers());
+        }
         Panel.ReleasePointerCapture(e.Pointer);
         e.Handled = true;
     }
@@ -347,6 +377,43 @@ public sealed partial class TerminalPane : UserControl
             return MouseButton.Middle;
         }
         return MouseButton.Left;
+    }
+
+    // ---- U8: clipboard -----------------------------------------------------------------------
+
+    /// <summary>Copy the engine's current selection to the Windows clipboard.</summary>
+    private void CopySelection()
+    {
+        string? text = _engine?.SelectionText();
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+        var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+        package.SetText(text);
+        Clipboard.SetContent(package);
+    }
+
+    /// <summary>Paste clipboard text into the shell as resolved input.</summary>
+    private async void PasteClipboard()
+    {
+        try
+        {
+            DataPackageView view = Clipboard.GetContent();
+            if (!view.Contains(StandardDataFormats.Text))
+            {
+                return;
+            }
+            string text = await view.GetTextAsync();
+            if (!string.IsNullOrEmpty(text))
+            {
+                _engine?.SendText(text);
+            }
+        }
+        catch
+        {
+            // Clipboard access can transiently fail (locked by another process); ignore.
+        }
     }
 
     // ---- Host events -------------------------------------------------------------------------
