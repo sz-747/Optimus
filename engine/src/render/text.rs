@@ -71,7 +71,14 @@ impl TextLayer {
         let scale = dpi_scale.max(0.1);
         self.font_size = (BASE_FONT_SIZE * scale).round().max(1.0);
         self.line_height = (self.font_size * LINE_HEIGHT_RATIO).ceil().max(1.0);
-        self.cell_width = self.measure_advance().ceil().max(1.0);
+        // The cell advance MUST equal the advance glyphon lays glyphs out with — NOT a ceil'd
+        // value. The grid (cursor block, cell backgrounds, selection) and the mouse→column
+        // hit-test all place column `c` at `c * cell_width`, while glyphon places glyph `c` of a
+        // row's shaped buffer at `c * advance`. Rounding `cell_width` up makes the two diverge by
+        // a fraction of a pixel per column, which compounds across a row until the cursor block
+        // and selection sit a full cell to the right of the text. Keeping the exact advance makes
+        // `c * cell_width` coincide with glyphon's glyph origin for every monospace column.
+        self.cell_width = self.measure_advance().max(1.0);
     }
 
     /// Physical-pixel cell size (advance width, line height).

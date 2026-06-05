@@ -7,8 +7,9 @@
 //! `Engine` itself is just the channel endpoint plus the worker-thread handle.
 
 use std::ffi::c_void;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{channel, Receiver, Sender, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 use std::thread::JoinHandle;
 
 use termwiz::input::{KeyCode, Modifiers};
@@ -314,12 +315,21 @@ fn order_points(a: (i64, usize), b: (i64, usize)) -> ((i64, usize), (i64, usize)
 }
 
 /// The render thread's main loop: drain commands (coalescing redraws), present once per burst.
+///
+/// Every command and present is run under [`catch_unwind`] so a panic from the GPU/driver
+/// (e.g. a wgpu surface error while a window crosses monitors / changes DPI) cannot tear down
+/// the render thread and orphan a pending reply channel — which the C# host would otherwise see
+/// as "render thread gone" and rethrow as a fatal unhandled exception. The panic location is
+/// recorded to `cmux_engine.log` by the installed hook; the thread keeps running so a transient
+/// fault recovers on the next frame and a persistent one merely leaves the panel blank.
 fn render_loop(
     options: EngineOptions,
     rx: Receiver<RenderCmd>,
     self_tx: Sender<RenderCmd>,
     sink: SharedSink,
 ) {
+    install_render_panic_logger();
+
     let mut state = RenderState {
         options,
         sink,
@@ -339,14 +349,14 @@ fn render_loop(
     };
 
     while let Ok(cmd) = rx.recv() {
-        if state.handle(cmd) {
+        if state.handle_guarded(cmd) {
             break;
         }
         // Coalesce: drain anything already queued before presenting once.
         loop {
             match rx.try_recv() {
                 Ok(cmd) => {
-                    if state.handle(cmd) {
+                    if state.handle_guarded(cmd) {
                         state.teardown();
                         return;
                     }
@@ -355,7 +365,7 @@ fn render_loop(
             }
         }
         if state.needs_present {
-            state.present();
+            state.present_guarded();
             state.needs_present = false;
         }
     }
@@ -363,7 +373,89 @@ fn render_loop(
     state.teardown();
 }
 
+/// Install (once, process-wide) a panic hook that appends the panic location + message to
+/// `cmux_engine.log`. The render thread's [`crate::ffi::set_last_error`] is thread-local and so
+/// can't reach the C# host (which reads it from the UI thread), so this file is the only durable
+/// record of *why* a render-thread panic happened. The previous hook's behavior is preserved.
+fn install_render_panic_logger() {
+    static HOOK: Once = Once::new();
+    HOOK.call_once(|| {
+        let default = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let loc = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown location>".to_string());
+            let msg = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic>".to_string());
+            append_engine_log(&format!("panic: {msg}  @ {loc}"));
+            default(info);
+        }));
+    });
+}
+
+/// Best-effort append of a diagnostic line to `cmux_engine.log` (next to the running executable,
+/// falling back to the system temp dir). Used for events that must survive the thread/FFI
+/// boundary, where the thread-local last-error channel can't reach the host.
+fn append_engine_log(line: &str) {
+    use std::io::Write;
+    let when = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let entry = format!("[{when}] {line}\n");
+
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let candidates = [
+        exe_dir.map(|d| d.join("cmux_engine.log")),
+        Some(std::env::temp_dir().join("cmux_engine.log")),
+    ];
+    for path in candidates.into_iter().flatten() {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = f.write_all(entry.as_bytes());
+            return;
+        }
+    }
+}
+
+/// Record that the render thread trapped a panic. The hook has already logged the location +
+/// message to `cmux_engine.log`; we keep the renderer (a transient GPU fault recovers next frame)
+/// and leave a breadcrumb on this thread's last-error channel.
+fn note_render_panic() {
+    crate::ffi::set_last_error("render thread trapped a panic (see cmux_engine.log next to the exe)");
+}
+
 impl RenderState {
+    /// Run [`Self::handle`] under a panic guard. Returns the stop flag (or `false` if a panic was
+    /// trapped — keep the thread alive). On a trapped panic the command's reply channel (if any)
+    /// has already been dropped during unwinding, so the FFI caller observes a soft error.
+    fn handle_guarded(&mut self, cmd: RenderCmd) -> bool {
+        match catch_unwind(AssertUnwindSafe(|| self.handle(cmd))) {
+            Ok(stop) => stop,
+            Err(_) => {
+                note_render_panic();
+                false
+            }
+        }
+    }
+
+    /// Run [`Self::present`] under a panic guard so a GPU error never tears down the thread.
+    fn present_guarded(&mut self) {
+        if catch_unwind(AssertUnwindSafe(|| self.present())).is_err() {
+            note_render_panic();
+        }
+    }
+
     /// Handle one command. Returns `true` if the loop should stop (Shutdown).
     fn handle(&mut self, cmd: RenderCmd) -> bool {
         match cmd {

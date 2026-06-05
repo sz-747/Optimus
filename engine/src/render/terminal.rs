@@ -19,7 +19,8 @@ use super::grid::{QuadInstance, QuadLayer};
 use super::text::{Span, TextLayer};
 use super::{PanelRenderer, RenderError};
 
-/// Selection highlight color, linear RGBA (translucent — drawn behind glyphs).
+/// Selection highlight color, sRGB-encoded RGBA (translucent — drawn behind glyphs, written
+/// verbatim to the UNORM surface like the other quad colors).
 const SELECTION_COLOR: [f32; 4] = [0.20, 0.40, 0.85, 0.40];
 
 /// A normalized text selection in stable-row coordinates (survives scrolling/output).
@@ -49,10 +50,21 @@ impl SelectionSpan {
     }
 }
 
+/// A shaped row buffer retained across frames, tagged with a key over the row's visible
+/// appearance. Reused when the key is unchanged so only rows that actually changed are
+/// re-shaped — text shaping is the dominant per-frame cost (plan §8 U6).
+struct CachedRow {
+    key: u64,
+    buffer: glyphon::Buffer,
+}
+
 pub struct TerminalRenderer {
     panel: PanelRenderer,
     quads: QuadLayer,
     text: TextLayer,
+    /// Shaped-buffer cache, indexed by viewport row (0 = top visible row). Slots are `None`
+    /// only transiently while a frame is being built. Cleared on resize/DPI change.
+    row_cache: Vec<Option<CachedRow>>,
 }
 
 impl TerminalRenderer {
@@ -67,16 +79,25 @@ impl TerminalRenderer {
         let panel = unsafe { PanelRenderer::new(panel_ptr, width, height)? };
         let quads = QuadLayer::new(&panel.device, panel.format(), width, height);
         let text = TextLayer::new(&panel.device, &panel.queue, panel.format(), dpi_scale);
-        Ok(Self { panel, quads, text })
+        Ok(Self {
+            panel,
+            quads,
+            text,
+            row_cache: Vec::new(),
+        })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         self.panel.resize(width, height);
         self.quads.set_resolution(&self.panel.queue, width, height);
+        // Shaping width + geometry changed: every cached row is stale.
+        self.row_cache.clear();
     }
 
     pub fn set_scale(&mut self, dpi_scale: f32) {
         self.text.set_scale(dpi_scale);
+        // Font size changed: re-shape every row at the new metrics.
+        self.row_cache.clear();
     }
 
     /// Physical-pixel cell size (advance width, line height) — used to derive cols/rows.
@@ -95,8 +116,16 @@ impl TerminalRenderer {
         cursor_blink_on: bool,
         selection: Option<SelectionSpan>,
     ) -> Result<(), RenderError> {
-        let (cell_w, cell_h) = self.text.cell_size();
-        let (surf_w, surf_h) = self.panel.size();
+        // Disjoint borrows: the row cache is mutated while `text` shapes and `panel` presents.
+        let Self {
+            panel,
+            quads: quad_layer,
+            text,
+            row_cache,
+        } = self;
+
+        let (cell_w, cell_h) = text.cell_size();
+        let (surf_w, surf_h) = panel.size();
 
         let palette = terminal.palette();
         let default_fg = palette.resolve_fg(ColorAttribute::Default);
@@ -121,8 +150,11 @@ impl TerminalRenderer {
         let cursor_row = cursor.y.max(0) as usize;
 
         let mut quads: Vec<QuadInstance> = Vec::new();
-        // (buffer, top_y) per row; kept alive until after prepare().
-        let mut row_buffers: Vec<(glyphon::Buffer, f32)> = Vec::with_capacity(lines.len());
+
+        // Reuse last frame's shaped buffers; only re-shape rows whose appearance changed. The
+        // quads (backgrounds, cursor block, selection) are cheap and rebuilt every frame.
+        let mut old_cache: Vec<Option<CachedRow>> = std::mem::take(row_cache);
+        let mut new_cache: Vec<Option<CachedRow>> = Vec::with_capacity(lines.len());
 
         for (r, line) in lines.iter().enumerate() {
             let y = r as f32 * cell_h;
@@ -161,7 +193,7 @@ impl TerminalRenderer {
                         y,
                         cell_w * w,
                         cell_h,
-                        lin(cell_bg),
+                        quad_color(cell_bg),
                     ));
                 }
 
@@ -198,7 +230,7 @@ impl TerminalRenderer {
                     y,
                     cell_w,
                     cell_h,
-                    lin(default_fg),
+                    quad_color(default_fg),
                 ));
                 fg[cursor_col] = default_bg_u8;
             }
@@ -238,42 +270,61 @@ impl TerminalRenderer {
                 });
             }
 
-            let buffer = self.text.shape_row(&spans, surf_w as f32);
-            row_buffers.push((buffer, y));
+            // Reuse the previous frame's buffer for this row if its appearance is unchanged;
+            // otherwise shape it now. (`matches!` ends the immutable borrow before the `take`.)
+            let key = row_appearance_key(&spans, surf_w);
+            let reuse = if matches!(old_cache.get(r), Some(Some(c)) if c.key == key) {
+                old_cache[r].take()
+            } else {
+                None
+            };
+            let cached = reuse.unwrap_or_else(|| CachedRow {
+                key,
+                buffer: text.shape_row(&spans, surf_w as f32),
+            });
+            new_cache.push(Some(cached));
         }
 
-        // Build text areas referencing the row buffers.
+        // Build text areas referencing the (reused or freshly shaped) row buffers.
         let bounds = TextLayer::full_bounds(surf_w, surf_h);
-        let areas: Vec<TextArea> = row_buffers
+        let areas: Vec<TextArea> = new_cache
             .iter()
-            .map(|(buffer, top)| TextArea {
-                buffer,
-                left: 0.0,
-                top: *top,
-                scale: 1.0,
-                bounds,
-                default_color: Color::rgba(
-                    default_fg_u8[0],
-                    default_fg_u8[1],
-                    default_fg_u8[2],
-                    default_fg_u8[3],
-                ),
-                custom_glyphs: &[],
+            .enumerate()
+            .map(|(r, slot)| {
+                let buffer = &slot
+                    .as_ref()
+                    .expect("every row slot is populated above")
+                    .buffer;
+                TextArea {
+                    buffer,
+                    left: 0.0,
+                    top: r as f32 * cell_h,
+                    scale: 1.0,
+                    bounds,
+                    default_color: Color::rgba(
+                        default_fg_u8[0],
+                        default_fg_u8[1],
+                        default_fg_u8[2],
+                        default_fg_u8[3],
+                    ),
+                    custom_glyphs: &[],
+                }
             })
             .collect();
 
-        self.quads
-            .upload(&self.panel.device, &self.panel.queue, &quads);
-        self.text
-            .prepare(&self.panel.device, &self.panel.queue, surf_w, surf_h, areas)?;
+        quad_layer.upload(&panel.device, &panel.queue, &quads);
+        text.prepare(&panel.device, &panel.queue, surf_w, surf_h, areas)?;
+
+        // Retain the shaped buffers for next frame's reuse (`areas` was consumed by `prepare`).
+        *row_cache = new_cache;
 
         // Acquire the frame and draw: clear → backgrounds/cursor → glyphs.
-        let frame = match self.panel.surface.get_current_texture() {
+        let frame = match panel.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
                 t
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.panel.surface.configure(&self.panel.device, &self.panel.config);
+                panel.surface.configure(&panel.device, &panel.config);
                 return Err(RenderError::FrameUnavailable("surface outdated/lost; reconfigured"));
             }
             wgpu::CurrentSurfaceTexture::Timeout => {
@@ -289,8 +340,7 @@ impl TerminalRenderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .panel
+        let mut encoder = panel
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("cmux frame encoder"),
@@ -303,7 +353,7 @@ impl TerminalRenderer {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(srgba_to_wgpu_linear(default_bg)),
+                        load: wgpu::LoadOp::Clear(srgba_to_wgpu_clear(default_bg)),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -312,13 +362,33 @@ impl TerminalRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            self.quads.draw(&mut pass, quads.len() as u32);
-            self.text.render(&mut pass)?;
+            quad_layer.draw(&mut pass, quads.len() as u32);
+            text.render(&mut pass)?;
         }
-        self.panel.queue.submit(std::iter::once(encoder.finish()));
+        panel.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
         Ok(())
     }
+}
+
+/// A stable key over a row's *visible* appearance — the coalesced spans (text + per-span
+/// color/bold/italic), salted with the surface width that shaping depends on. Two frames whose
+/// row keys match render identically, so the shaped buffer can be reused without re-shaping (the
+/// dominant per-frame cost). The font size is not in the key because a DPI change clears the
+/// whole cache. Background color and the cursor block are quads (not shaped), so they are not
+/// part of the key; the cursor's glyph recolor *is*, via the span colors.
+fn row_appearance_key(spans: &[Span], surf_w: u32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    surf_w.hash(&mut h);
+    spans.len().hash(&mut h);
+    for s in spans {
+        s.text.hash(&mut h);
+        s.color.hash(&mut h);
+        s.bold.hash(&mut h);
+        s.italic.hash(&mut h);
+    }
+    h.finish()
 }
 
 /// sRGB 0–1 tuple → 8-bit sRGB components (for glyphon text colors).
@@ -327,19 +397,20 @@ fn srgb_u8(c: SrgbaTuple) -> [u8; 4] {
     [r, g, b, a]
 }
 
-/// sRGB tuple → linear RGBA (for quad colors written to the sRGB surface).
-fn lin(c: SrgbaTuple) -> [f32; 4] {
-    let l = c.to_linear();
-    [l.0, l.1, l.2, l.3]
+/// sRGB tuple → sRGB-encoded RGBA for quad colors. The surface is a linear UNORM format (see
+/// `render::mod`), so we write the gamma-encoded components verbatim — the `SrgbaTuple` already
+/// holds sRGB-encoded 0–1 values. Writing linear here would wash colors out, and (more visibly)
+/// blend glyph AA in the wrong space.
+fn quad_color(c: SrgbaTuple) -> [f32; 4] {
+    [c.0, c.1, c.2, c.3]
 }
 
-/// sRGB tuple → wgpu clear color (linear).
-fn srgba_to_wgpu_linear(c: SrgbaTuple) -> wgpu::Color {
-    let l = c.to_linear();
+/// sRGB tuple → wgpu clear color, sRGB-encoded (the surface is UNORM, written verbatim).
+fn srgba_to_wgpu_clear(c: SrgbaTuple) -> wgpu::Color {
     wgpu::Color {
-        r: l.0 as f64,
-        g: l.1 as f64,
-        b: l.2 as f64,
-        a: l.3 as f64,
+        r: c.0 as f64,
+        g: c.1 as f64,
+        b: c.2 as f64,
+        a: c.3 as f64,
     }
 }

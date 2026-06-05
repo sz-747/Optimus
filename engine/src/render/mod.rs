@@ -76,11 +76,17 @@ impl PanelRenderer {
             }))?;
 
         let caps = surface.get_capabilities(&adapter);
+        // Prefer a NON-sRGB (linear UNORM) format. Glyph anti-aliasing coverage must be blended in
+        // perceptual (sRGB-encoded) space — the space grayscale/ClearType AA is tuned for. An sRGB
+        // surface makes the hardware blend in *linear* space, which makes light-on-dark text look
+        // heavy and soft ("blurry"). With a UNORM surface we write already-sRGB-encoded colors and
+        // blending happens in that encoded space, giving crisp terminal text. All color writers
+        // below therefore emit sRGB-encoded values (not linearized).
         let format = caps
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())
+            .find(|f| !f.is_srgb())
             .unwrap_or(caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
@@ -89,7 +95,9 @@ impl PanelRenderer {
             width: width.max(1),
             height: height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
-            desired_maximum_frame_latency: 2,
+            // 1 (not the default 2): a terminal favors input-to-photon latency over throughput,
+            // so we let the GPU queue at most one frame ahead before blocking the next present.
+            desired_maximum_frame_latency: 1,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
         };

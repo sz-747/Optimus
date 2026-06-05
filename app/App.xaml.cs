@@ -40,6 +40,13 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// Append a <b>recovered</b> (non-fatal) error to crash.log — same sink as the
+    /// unhandled-exception logger. Used by UI code that catches an engine error and keeps the app
+    /// running instead of letting it surface as a fatal STATUS_STOWED_EXCEPTION.
+    /// </summary>
+    internal static void LogError(string source, Exception? ex) => CrashLog("(recovered) " + source, ex);
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         _window = new MainWindow();

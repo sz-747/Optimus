@@ -132,13 +132,24 @@ public sealed partial class TerminalPane : UserControl
             return; // layout not settled yet; a SizeChanged will call back.
         }
 
-        _engine.Resize(0, 0, pw, ph, scale);
-
-        if (!_started)
+        try
         {
-            _started = true;
-            _engine.SpawnShell(string.Empty); // default shell: pwsh → powershell → cmd
-            Panel.Focus(FocusState.Programmatic);
+            _engine.Resize(0, 0, pw, ph, scale);
+
+            if (!_started)
+            {
+                _engine.SpawnShell(string.Empty); // default shell: pwsh → powershell → cmd
+                _started = true; // only after a successful spawn, so a failure retries next call
+                Panel.Focus(FocusState.Programmatic);
+            }
+        }
+        catch (Exception ex)
+        {
+            // A resize/DPI reconfigure (or first spawn) can transiently fail — e.g. the GPU
+            // surface churns while the window crosses monitors or changes scale. Log it and keep
+            // the app alive; the next SizeChanged/CompositionScaleChanged retries. Letting this
+            // throw out of a UI-thread event handler would crash the process (STATUS_STOWED_EXCEPTION).
+            App.LogError("TerminalPane.Configure", ex);
         }
     }
 
