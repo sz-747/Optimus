@@ -1,0 +1,91 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    cmux for Windows — the WinUI 3 shell (plan §4 / §8 U2).
+
+    Unpackaged + self-contained so it runs without a pre-installed Windows App SDK
+    runtime and without MSIX packaging. The Rust engine (cmux_engine.dll) is loaded
+    over a C ABI (plan §6); see the BuildCmuxEngine target below.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Cmux</RootNamespace>
+    <AssemblyName>Cmux</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Build defaults to x64; win-arm64 is supported for `dotnet publish -r win-arm64`. -->
+    <Platforms>x64;arm64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- The FFI / COM interop layer needs unsafe pointer work (panel ptr, ByteBuffer). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultPageItems>true</EnableDefaultPageItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4188" />
+  </ItemGroup>
+
+  <!--
+    Build the Rust engine before the C# build, then stage cmux_engine.dll next to the
+    app so DllImport("cmux_engine.dll") resolves it. cargo is invoked from its known
+    install location (it is frequently not on PATH on dev machines); if cargo cannot be
+    located the target is skipped and the build falls back to a previously-built DLL.
+  -->
+  <PropertyGroup>
+    <EngineDir>$(MSBuildThisFileDirectory)..\engine</EngineDir>
+    <EngineProfile Condition="'$(Configuration)' == 'Release'">release</EngineProfile>
+    <EngineProfile Condition="'$(EngineProfile)' == ''">debug</EngineProfile>
+    <EngineCargoFlag Condition="'$(EngineProfile)' == 'release'">--release</EngineCargoFlag>
+    <EngineDll>$(EngineDir)\target\$(EngineProfile)\cmux_engine.dll</EngineDll>
+
+    <CargoExe Condition="'$(CargoExe)' == '' and Exists('$(USERPROFILE)\.cargo\bin\cargo.exe')">$(USERPROFILE)\.cargo\bin\cargo.exe</CargoExe>
+    <CargoExe Condition="'$(CargoExe)' == ''">cargo</CargoExe>
+  </PropertyGroup>
+
+  <Target Name="BuildCmuxEngine" BeforeTargets="BeforeBuild" Condition="'$(SkipCmuxEngineBuild)' != 'true'">
+    <Message Importance="high" Text="cmux: cargo build ($(EngineProfile)) in $(EngineDir)" />
+    <Exec Command="&quot;$(CargoExe)&quot; build $(EngineCargoFlag)"
+          WorkingDirectory="$(EngineDir)"
+          ContinueOnError="true" />
+  </Target>
+
+  <Target Name="EnsureCmuxEngineDll" AfterTargets="BuildCmuxEngine" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(EngineDll)')"
+           Text="cmux_engine.dll not found at $(EngineDll). Build the engine first: run build\build.ps1, or `cargo build` in engine\ ." />
+  </Target>
+
+  <ItemGroup>
+    <None Include="$(EngineDll)" Condition="Exists('$(EngineDll)')">
+      <Link>cmux_engine.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!--
+    Unpackaged-publish fix (plan §9.1 risk #3): `dotnet publish` copies the framework PRIs
+    (Microsoft.UI.pri, …) but drops the app's OWN generated PRI ($(TargetName).pri). Without
+    it, the published app fails to resolve its compiled XAML / resource map at runtime. Force
+    it into the publish set here. (Plain `dotnet build` already stages it next to the exe.)
+  -->
+  <Target Name="IncludeProjectPriInPublish" BeforeTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(OutDir)$(TargetName).pri" Condition="Exists('$(OutDir)$(TargetName).pri')">
+        <RelativePath>$(TargetName).pri</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+</Project>
