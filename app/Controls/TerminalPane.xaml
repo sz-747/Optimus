@@ -5,6 +5,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!-- The GPU surface the Rust engine renders into (plan §5.2). IsTabStop makes it
-         focusable so it receives keyboard input (U7); the engine owns the swapchain. -->
-    <SwapChainPanel x:Name="Panel" IsTabStop="True" />
+         focusable so it receives keyboard input (U7); the engine owns the swapchain.
+         Margin insets the surface so terminal glyphs aren't flush against the pane edge:
+         the engine sizes its grid from Panel.ActualWidth/Height, so the gutter reduces the
+         drawable area and shows the content-host background (#0C0C0C, matching the console). -->
+    <SwapChainPanel x:Name="Panel" IsTabStop="True" Margin="8,4,8,4" />
 </UserControl>
