@@ -20,8 +20,18 @@ namespace Cmux.Splits;
 internal sealed class PaneTabStrip : Grid
 {
     private const double StripHeight = 32.0;
+    private const double AccentThickness = 2.0;
 
+    // A teal accent line along the strip's top edge is the active-pane indicator (R7). The strip sits
+    // flush at the top of its pane, so this top border doubles as a pane-level focus marker: the
+    // focused pane shows the line, every other pane shows none. It is the only focus cue the cmux
+    // layer can give — the engine has no focus concept and draws a solid cursor in every surface, so
+    // without it two panes look identical and keystrokes appear to land ambiguously. The border
+    // thickness is constant (only the brush toggles between teal and transparent) so gaining/losing
+    // focus never reflows the strip's contents.
     private static readonly SolidColorBrush StripBackground = new(Color.FromArgb(0xFF, 0x16, 0x16, 0x16));
+    private static readonly SolidColorBrush ActiveAccent = new(Color.FromArgb(0xFF, 0x2D, 0xD4, 0xBF));
+    private static readonly SolidColorBrush InactiveAccent = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
     private static readonly SolidColorBrush SelectedChip = new(Color.FromArgb(0xFF, 0x2D, 0x2D, 0x2D));
     private static readonly SolidColorBrush Transparent = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
     private static readonly SolidColorBrush ActiveText = new(Color.FromArgb(0xFF, 0xE6, 0xE6, 0xE6));
@@ -52,6 +62,10 @@ internal sealed class PaneTabStrip : Grid
     {
         Height = StripHeight;
         Background = StripBackground;
+        // Constant top-border slot; the brush starts transparent and Sync paints it teal on the
+        // focused pane from the first snapshot (toggling colour, never thickness, avoids reflow).
+        BorderThickness = new Thickness(0, AccentThickness, 0, 0);
+        BorderBrush = InactiveAccent;
         ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -114,6 +128,16 @@ internal sealed class PaneTabStrip : Grid
         _zoomButton.Foreground = active ? ActiveText : MutedText;
         _zoomButton.Background = active ? SelectedChip : Transparent;
     }
+
+    /// <summary>
+    /// Reflect whether this pane is the focused one (R7) by showing the teal accent line on its top
+    /// edge (and hiding it otherwise). Because the engine draws a solid cursor in every pane
+    /// regardless of focus, this line is the only cmux-level cue for which pane currently receives
+    /// keyboard input. Driven from the snapshot's <c>FocusedPane</c> via <see cref="PaneView"/>; a
+    /// pure view update that toggles only the border brush, never its thickness.
+    /// </summary>
+    public void SetPaneActive(bool active) =>
+        BorderBrush = active ? ActiveAccent : InactiveAccent;
 
     private FrameworkElement MakeChip(TabHeaderDto header)
     {

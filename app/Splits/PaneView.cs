@@ -113,6 +113,7 @@ internal sealed class PaneView : UserControl
 
         RenderStrip(leaf.Tabs, leaf.Selected);
         _strip.SetZoomActive(snapshot.ZoomedPane == _paneId);
+        _strip.SetPaneActive(snapshot.FocusedPane == _paneId);
     }
 
     /// <summary>
