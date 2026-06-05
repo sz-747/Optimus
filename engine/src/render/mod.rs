@@ -34,6 +34,12 @@ pub struct PanelRenderer {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
+    /// Composition (= DPI) scale of the hosting `SwapChainPanel`. The panel composites the
+    /// swapchain magnified by this factor; we apply its inverse as a swapchain matrix
+    /// transform so physical surface pixels map 1:1 to screen pixels (plan §5.2). Re-asserted
+    /// after every `configure`, since the transform belongs to the swapchain object and is
+    /// dropped whenever the swapchain is recreated.
+    composition_scale: f32,
 }
 
 impl PanelRenderer {
@@ -43,11 +49,19 @@ impl PanelRenderer {
     /// `panel` is a raw `ISwapChainPanel*` (COM) obtained on the C# side. wgpu refcounts
     /// it for the lifetime of the surface.
     ///
+    /// `scale` is the panel's composition (DPI) scale; its inverse is applied as a swapchain
+    /// matrix transform so the panel composites the surface 1:1 (plan §5.2).
+    ///
     /// # Safety
     /// `panel` must be a valid, live `ISwapChainPanel*` pointer (e.g. from
     /// `ISwapChainPanelNative` on a real `SwapChainPanel`). It must remain valid until
     /// this `PanelRenderer` is dropped.
-    pub unsafe fn new(panel: *mut c_void, width: u32, height: u32) -> Result<Self, RenderError> {
+    pub unsafe fn new(
+        panel: *mut c_void,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Result<Self, RenderError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::DX12,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -103,13 +117,17 @@ impl PanelRenderer {
         };
         surface.configure(&device, &config);
 
-        Ok(Self {
+        let renderer = Self {
             _instance: instance,
             surface,
             device,
             queue,
             config,
-        })
+            composition_scale: if scale > 0.0 { scale } else { 1.0 },
+        };
+        renderer.apply_composition_transform();
+
+        Ok(renderer)
     }
 
     /// The surface's texture format (sRGB) — needed to build the quad/text pipelines.
@@ -127,7 +145,74 @@ impl PanelRenderer {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
+        self.reconfigure();
+    }
+
+    /// Update the panel's composition (DPI) scale and re-assert the inverse swapchain
+    /// transform. Called on `CompositionScaleChanged` (e.g. dragging the window between
+    /// monitors of different DPI — plan §5.2).
+    pub fn set_composition_scale(&mut self, scale: f32) {
+        if scale > 0.0 {
+            self.composition_scale = scale;
+        }
+        self.apply_composition_transform();
+    }
+
+    /// Recreate the swapchain at the current config, then re-assert the inverse
+    /// composition-scale transform. The transform is a property of the swapchain object, so
+    /// it is lost whenever the swapchain is recreated (resize, outdated/lost recovery) and
+    /// must be set again after every `configure`.
+    pub(crate) fn reconfigure(&self) {
         self.surface.configure(&self.device, &self.config);
+        self.apply_composition_transform();
+    }
+
+    /// Apply `1/composition_scale` as the swapchain's presentation matrix transform.
+    ///
+    /// A `SwapChainPanel` composites its DXGI swapchain magnified by the panel's
+    /// composition scale (which WinUI keeps equal to the DPI scale). wgpu owns the
+    /// swapchain and never sets this transform — and isn't even told the scale — so without
+    /// correction the rendered surface is drawn `scale×` too large, anchored at the
+    /// top-left. Text, cursor, and selection stay mutually aligned (all magnified) but
+    /// drift down-and-right of the OS hardware cursor, worse the farther from the origin.
+    /// Setting the inverse transform makes physical surface pixels composite 1:1 (plan §5.2).
+    fn apply_composition_transform(&self) {
+        use windows::core::Interface; // brings `IDXGISwapChain3::cast` into scope
+        use windows::Win32::Graphics::Dxgi::{DXGI_MATRIX_3X2_F, IDXGISwapChain2};
+
+        let scale = self.composition_scale;
+        if !(scale > 0.0) {
+            return;
+        }
+
+        // SAFETY: `as_hal` yields the live DX12 surface wgpu created for this panel; we only
+        // read its swapchain and set a presentation transform — we never destroy the
+        // resource, and the guard keeps the surface borrowed for the duration of the call.
+        unsafe {
+            let Some(hal_surface) = self.surface.as_hal::<wgpu::hal::dx12::Api>() else {
+                return;
+            };
+            // wgpu creates the swapchain lazily on `configure`; bail quietly if it isn't up yet.
+            let Some(swap_chain) = hal_surface.swap_chain() else {
+                return;
+            };
+            // IDXGISwapChain3 (from CreateSwapChainForComposition) → IDXGISwapChain2 for
+            // SetMatrixTransform. wgpu-hal and the engine share one `windows 0.62` crate, so
+            // this COM interface is directly interoperable (no raw-pointer bridging).
+            let Ok(swap_chain2) = swap_chain.cast::<IDXGISwapChain2>() else {
+                return;
+            };
+            let inv = 1.0 / scale;
+            let transform = DXGI_MATRIX_3X2_F {
+                _11: inv,
+                _12: 0.0,
+                _21: 0.0,
+                _22: inv,
+                _31: 0.0,
+                _32: 0.0,
+            };
+            let _ = swap_chain2.SetMatrixTransform(&transform);
+        }
     }
 
     /// Clear the surface to `(r, g, b, a)` and present. Spike 1's "render one frame" step;
@@ -140,7 +225,7 @@ impl PanelRenderer {
             // Surface no longer matches the panel (resize/DPI/device change): reconfigure and let
             // the caller retry next tick rather than drawing into a stale buffer.
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
+                self.reconfigure();
                 return Err(RenderError::FrameUnavailable(
                     "surface outdated/lost; reconfigured",
                 ));

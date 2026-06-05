@@ -3,13 +3,14 @@
 //! rectangle plus an RGBA color. The vertex shader expands six corners per instance and maps
 //! pixel coordinates to NDC using the surface resolution (a uniform).
 //!
-//! Colors are written **linear**: the surface is an sRGB format, so the GPU encodes the
-//! shader's linear output to sRGB on write. Callers pass linear RGBA (see `to_linear` at the
-//! call site).
+//! Colors are written **sRGB-encoded**: the surface is a linear UNORM format (see
+//! `PanelRenderer::new`), so the shader's output is composited verbatim with no
+//! encoding step. Callers pass already-sRGB-encoded RGBA (see `quad_color` at the call
+//! site) — the space glyph anti-aliasing is tuned for, which keeps light-on-dark text crisp.
 
 use wgpu::util::DeviceExt;
 
-/// One quad: position + size in physical pixels, color in linear RGBA.
+/// One quad: position + size in physical pixels, color in sRGB-encoded RGBA.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct QuadInstance {

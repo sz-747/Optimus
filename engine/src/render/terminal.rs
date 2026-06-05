@@ -76,7 +76,7 @@ impl TerminalRenderer {
         height: u32,
         dpi_scale: f32,
     ) -> Result<Self, RenderError> {
-        let panel = unsafe { PanelRenderer::new(panel_ptr, width, height)? };
+        let panel = unsafe { PanelRenderer::new(panel_ptr, width, height, dpi_scale)? };
         let quads = QuadLayer::new(&panel.device, panel.format(), width, height);
         let text = TextLayer::new(&panel.device, &panel.queue, panel.format(), dpi_scale);
         Ok(Self {
@@ -96,6 +96,8 @@ impl TerminalRenderer {
 
     pub fn set_scale(&mut self, dpi_scale: f32) {
         self.text.set_scale(dpi_scale);
+        // Cancel the panel's composition-scale magnification at the new scale (plan §5.2).
+        self.panel.set_composition_scale(dpi_scale);
         // Font size changed: re-shape every row at the new metrics.
         self.row_cache.clear();
     }
@@ -324,7 +326,7 @@ impl TerminalRenderer {
                 t
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                panel.surface.configure(&panel.device, &panel.config);
+                panel.reconfigure();
                 return Err(RenderError::FrameUnavailable("surface outdated/lost; reconfigured"));
             }
             wgpu::CurrentSurfaceTexture::Timeout => {

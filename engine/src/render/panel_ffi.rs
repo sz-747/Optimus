@@ -29,7 +29,9 @@ pub unsafe extern "C" fn cmux_spike_renderer_create(
 ) -> *mut PanelRenderer {
     let result = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: caller guarantees `panel` is a valid ISwapChainPanel*.
-        match unsafe { PanelRenderer::new(panel, width, height) } {
+        // Scale 1.0: the spike only clears to a solid color, which fills the surface
+        // regardless of the composition transform.
+        match unsafe { PanelRenderer::new(panel, width, height, 1.0) } {
             Ok(r) => Box::into_raw(Box::new(r)),
             Err(_) => std::ptr::null_mut(),
         }
