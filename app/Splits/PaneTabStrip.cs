@@ -73,7 +73,9 @@ internal sealed class PaneTabStrip : Grid
             VerticalAlignment = VerticalAlignment.Stretch,
         };
 
-        Button splitRight = MakeFlatButton("◧", $"Split right ({ShortcutMap.DescribeChord(ShortcutAction.SplitRight)})");
+        // Glyphs shade the half where the NEW pane lands: ◨ = right (split-right), ⬓ = bottom
+        // (split-down). The existing pane keeps the unshaded half; the new pane takes focus (R4).
+        Button splitRight = MakeFlatButton("◨", $"Split right ({ShortcutMap.DescribeChord(ShortcutAction.SplitRight)})");
         splitRight.Click += (_, _) => SplitRightRequested?.Invoke();
         actions.Children.Add(splitRight);
 
