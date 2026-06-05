@@ -26,6 +26,12 @@ windows = { version = "0.62", features = [
 wgpu = { version = "=29.0.1", default-features = false, features = ["dx12"] }
 # Minimal executor to block on wgpu's async adapter/device requests from the render thread.
 pollster = "0.4"
+# VT core (plan §2.2 / §8 U4): parses the shell's output into a grid + scrollback and
+# yields parsed OSC notifications via its `AlertHandler` (the reason we pick wezterm-term
+# over alacritty_terminal). Git-pinned to a release tag (unpublished on crates.io at the
+# revision we need). `termwiz` (same repo/tag) supplies the KeyCode/Modifiers input types.
+wezterm-term = { git = "https://github.com/wezterm/wezterm", tag = "20240203-110809-5046fc22" }
+termwiz = { git = "https://github.com/wezterm/wezterm", tag = "20240203-110809-5046fc22" }
 
 [build-dependencies]
 # Generates app/Interop/NativeMethods.g.cs from the #[no_mangle] extern "C" ABI (plan §6).

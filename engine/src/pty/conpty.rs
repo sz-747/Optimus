@@ -183,6 +183,18 @@ impl ConPty {
         }
     }
 
+    /// The shell's exit code, or `None` if it is still running (or unqueryable).
+    pub fn exit_code(&self) -> Option<i32> {
+        const STILL_ACTIVE: u32 = 259;
+        let mut code: u32 = 0;
+        unsafe { GetExitCodeProcess(self.proc_info.hProcess, &mut code).ok()? };
+        if code == STILL_ACTIVE {
+            None
+        } else {
+            Some(code as i32)
+        }
+    }
+
     /// Resize the pseudoconsole. Forwarded from the C# resize/DPI loop.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
         let size = COORD {
@@ -199,6 +211,18 @@ impl ConPty {
     pub fn output_reader(&self) -> OutputReader {
         OutputReader {
             handle: self.output_read,
+        }
+    }
+
+    /// A `Write` adapter over the shell's input pipe, for handing to `wezterm-term`'s
+    /// `Terminal` (so the VT core's own replies — DA/cursor reports — reach the shell).
+    ///
+    /// The adapter *borrows* the input handle (does not own/close it); it must be dropped
+    /// before this `ConPty` is dropped. Both live on the render thread, so declaring the
+    /// `Terminal` before the `ConPty` in the owning struct gives the correct drop order.
+    pub fn input_writer(&self) -> PtyInput {
+        PtyInput {
+            handle: self.input_write,
         }
     }
 
@@ -259,6 +283,30 @@ impl OutputReader {
             Err(e) if e.code() == ERROR_BROKEN_PIPE.to_hresult() => Ok(0),
             Err(e) => Err(e),
         }
+    }
+}
+
+/// A `Send`, non-owning `std::io::Write` over the PTY input-write handle.
+///
+/// Handed to `wezterm-term`'s `Terminal` as its writer. Does not own the handle — the
+/// parent [`ConPty`] closes it on drop.
+pub struct PtyInput {
+    handle: HANDLE,
+}
+
+// The raw handle is just an integer; writes are serialized on the render thread.
+unsafe impl Send for PtyInput {}
+
+impl std::io::Write for PtyInput {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut written: u32 = 0;
+        unsafe { WriteFile(self.handle, Some(buf), Some(&mut written), None) }
+            .map_err(std::io::Error::other)?;
+        Ok(written as usize)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

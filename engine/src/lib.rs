@@ -18,6 +18,7 @@ pub mod engine;
 pub mod ffi;
 pub mod pty;
 pub mod render;
+pub mod vt;
 
 use crate::engine::Engine;
 use crate::ffi::events::{ByteBuffer, EngineOptions, EventSink, HostEvent, HostEventFn};
