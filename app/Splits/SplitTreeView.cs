@@ -30,6 +30,17 @@ internal sealed class SplitTreeView : Grid
     private readonly Action<BranchId, double> _onDividerChanged;
     private readonly Dictionary<PaneId, FrameworkElement> _paneViews = new();
 
+    // The (root, zoom) pair last materialized into the visual tree. Tree rewrites are immutable and
+    // focus lives *outside* the node tree, so a focus-only change (FocusPane/MoveFocus) leaves
+    // snapshot.Root reference-identical to what we last rendered. Detecting that lets us skip the
+    // whole detach/rebuild, which is both a latency win (no re-parenting live SwapChainPanels for a
+    // change that doesn't alter layout) and a correctness fix: a strip button raises GotFocus →
+    // FocusPane → snapshot *before* its own Click fires, and re-parenting the pane subtree mid-click
+    // would otherwise swallow that Click and the action would never dispatch (R4).
+    private SplitNode? _renderedRoot;
+    private PaneId? _renderedZoom;
+    private bool _hasRendered;
+
     /// <param name="paneFactory">Builds the leaf view for a pane (a <c>PaneView</c> in U4+).</param>
     /// <param name="onDividerChanged">Called with the committed [0,1] fraction after a divider drag.</param>
     public SplitTreeView(Func<PaneId, FrameworkElement> paneFactory, Action<BranchId, double> onDividerChanged)
@@ -41,6 +52,18 @@ internal sealed class SplitTreeView : Grid
     /// <summary>Rebuild the visual tree from <paramref name="snapshot"/>, reusing cached pane views.</summary>
     public void Render(TreeSnapshot snapshot)
     {
+        // Focus-only change → identical layout. Skip the rebuild so we neither re-parent panes
+        // (which would swallow an in-flight strip-button Click — R4) nor pay the composition churn.
+        if (_hasRendered
+            && ReferenceEquals(snapshot.Root, _renderedRoot)
+            && snapshot.ZoomedPane == _renderedZoom)
+        {
+            return;
+        }
+        _renderedRoot = snapshot.Root;
+        _renderedZoom = snapshot.ZoomedPane;
+        _hasRendered = true;
+
         // Detach every cached view from its current parent so it can be re-placed (a WinUI element
         // may only have one parent at a time).
         foreach (FrameworkElement view in _paneViews.Values)
