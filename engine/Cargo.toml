@@ -20,6 +20,12 @@ windows = { version = "0.62", features = [
     "Win32_System_IO",
     "Win32_Storage_FileSystem",
 ] }
+# Pinned exactly: 29.0.1 is the version whose DX12 backend exports
+# `SurfaceTargetUnsafe::SwapChainPanel` (gated behind `#[cfg(dx12)]`). See plan §5.1 / §11.
+# DX12 is the only backend we want for the WinUI 3 SwapChainPanel composition path.
+wgpu = { version = "=29.0.1", default-features = false, features = ["dx12"] }
+# Minimal executor to block on wgpu's async adapter/device requests from the render thread.
+pollster = "0.4"
 
 [profile.release]
 opt-level = 3

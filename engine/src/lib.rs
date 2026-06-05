@@ -8,9 +8,9 @@
 //! `pty` (ConPTY) lands first as spike 2 / unit U5.
 
 pub mod pty;
+pub mod render;
 
 // Filled in by later Phase-1 units:
 // pub mod engine;   // U4 — Engine: owns vt + pty + renderer + channels
 // pub mod vt;       // U4 — wezterm-term wiring + AlertHandler
-// pub mod render;   // U6 — wgpu device/surface/present + grid + text
 // pub mod ffi;      // U3 — the #[no_mangle] extern "C" ABI surface
