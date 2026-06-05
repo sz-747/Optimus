@@ -53,6 +53,12 @@ internal sealed class PaneView : UserControl
         _strip.TabClosed += id => _controller.CloseTab(id);
         _strip.NewTabRequested += () => _controller.NewTab(_paneId);
 
+        // Pointer/programmatic focus landing anywhere in this pane's subtree (a terminal click)
+        // makes it the model's focused pane, so subsequent keyboard ops target it (R7/R8). Guarded
+        // so re-focusing the already-focused pane raises no snapshot churn and cannot loop with the
+        // host's focus-follows-snapshot step.
+        this.GotFocus += OnPaneGotFocus;
+
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -99,6 +105,14 @@ internal sealed class PaneView : UserControl
         }
 
         RenderStrip(leaf.Tabs, leaf.Selected);
+    }
+
+    private void OnPaneGotFocus(object sender, RoutedEventArgs e)
+    {
+        if (_controller.FocusedPane != _paneId)
+        {
+            _controller.FocusPane(_paneId);
+        }
     }
 
     private void EnsureHosted(SurfaceId id)
