@@ -16,7 +16,7 @@ use wezterm_term::{Terminal, TerminalSize};
 
 use crate::ffi::events::{event_kind, EngineOptions, EventSink};
 use crate::pty::{default_shell, ConPty};
-use crate::render::PanelRenderer;
+use crate::render::terminal::TerminalRenderer;
 use crate::vt::{build_terminal, SharedSink};
 
 /// A raw COM pointer moved to the render thread. The `SwapChainPanel`'s native interface is
@@ -264,7 +264,7 @@ struct RenderState {
     terminal: Option<Terminal>,
     reader: Option<JoinHandle<()>>,
     pty: Option<ConPty>,
-    renderer: Option<PanelRenderer>,
+    renderer: Option<TerminalRenderer>,
 
     // Current grid + surface geometry (updated by Resize; seeded from options).
     cols: u16,
@@ -272,6 +272,10 @@ struct RenderState {
     pixel_width: u32,
     pixel_height: u32,
     dpi: u32,
+
+    /// Lines scrolled back from the live bottom (0 = following output). Driven by SendScroll;
+    /// reset to 0 when fresh PTY output arrives so new text is always visible.
+    scroll_offset: usize,
 
     needs_present: bool,
 }
@@ -296,6 +300,7 @@ fn render_loop(
         pixel_width: 0,
         pixel_height: 0,
         dpi: 96,
+        scroll_offset: 0,
         needs_present: false,
     };
 
@@ -334,7 +339,8 @@ impl RenderState {
                 height,
                 reply,
             } => {
-                let result = unsafe { PanelRenderer::new(panel.0, width, height) };
+                let dpi_scale = self.dpi as f32 / 96.0;
+                let result = unsafe { TerminalRenderer::new(panel.0, width, height, dpi_scale) };
                 match result {
                     Ok(renderer) => {
                         self.renderer = Some(renderer);
@@ -361,6 +367,8 @@ impl RenderState {
             RenderCmd::PtyBytes(buf) => {
                 if let Some(term) = self.terminal.as_mut() {
                     term.advance_bytes(&buf);
+                    // Snap the viewport to the live bottom on fresh output.
+                    self.scroll_offset = 0;
                     self.needs_present = true;
                 }
             }
@@ -396,8 +404,22 @@ impl RenderState {
             RenderCmd::SendMouse { .. } => {
                 // U8: drag-selection + mouse reporting. Wired in the selection unit.
             }
-            RenderCmd::SendScroll { .. } => {
-                // U6/U8: scrollback viewport offset.
+            RenderCmd::SendScroll { delta_lines } => {
+                // Positive delta scrolls toward history (older), negative toward the bottom.
+                let max_offset = self
+                    .terminal
+                    .as_ref()
+                    .map(|t| {
+                        let s = t.screen();
+                        s.scrollback_rows().saturating_sub(s.physical_rows)
+                    })
+                    .unwrap_or(0);
+                let delta = delta_lines.round() as i64;
+                let next = (self.scroll_offset as i64 + delta).clamp(0, max_offset as i64);
+                if next as usize != self.scroll_offset {
+                    self.scroll_offset = next as usize;
+                    self.needs_present = true;
+                }
             }
             RenderCmd::Resize {
                 cols,
@@ -483,11 +505,35 @@ impl RenderState {
         pixel_height: u32,
         dpi_scale: f32,
     ) -> Result<(), String> {
-        self.cols = cols.max(1);
-        self.rows = rows.max(1);
         self.pixel_width = pixel_width.max(1);
         self.pixel_height = pixel_height.max(1);
         self.dpi = ((96.0 * dpi_scale).round() as u32).max(1);
+
+        // Update the renderer's DPI + surface first so cell metrics reflect the new scale before
+        // we derive the grid from pixels.
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.set_scale(dpi_scale);
+            renderer.resize(self.pixel_width, self.pixel_height);
+        }
+
+        // Engine-authoritative grid: cols/rows == 0 means "derive from pixels using the engine's
+        // own cell metrics" (the C# side knows panel pixels + DPI but not the font's cell size).
+        let (cols, rows) = if cols == 0 || rows == 0 {
+            match self.renderer.as_ref() {
+                Some(renderer) => {
+                    let (cw, ch) = renderer.cell_size();
+                    let c = (self.pixel_width as f32 / cw).floor().max(1.0) as u16;
+                    let r = (self.pixel_height as f32 / ch).floor().max(1.0) as u16;
+                    (c, r)
+                }
+                // No renderer yet (headless/tests): keep the previously configured grid.
+                None => (self.cols, self.rows),
+            }
+        } else {
+            (cols, rows)
+        };
+        self.cols = cols.max(1);
+        self.rows = rows.max(1);
 
         if let Some(term) = self.terminal.as_mut() {
             term.resize(TerminalSize {
@@ -502,19 +548,19 @@ impl RenderState {
             pty.resize(self.cols, self.rows)
                 .map_err(|e| format!("resize pseudoconsole failed: {e}"))?;
         }
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.resize(self.pixel_width, self.pixel_height);
-        }
         self.needs_present = true;
         Ok(())
     }
 
-    /// Present one frame. Phase 1 (U4) clears to the terminal background; U6 replaces this with
-    /// the grid + glyph passes driven by the `Terminal`'s `Screen`.
+    /// Present one frame: the grid + glyph passes driven by the `Terminal`'s `Screen` (U6).
+    /// Without a terminal yet, there is nothing to draw (the surface keeps its cleared contents).
     fn present(&mut self) {
-        if let Some(renderer) = self.renderer.as_mut() {
+        let scroll_offset = self.scroll_offset;
+        if let (Some(renderer), Some(term)) =
+            (self.renderer.as_mut(), self.terminal.as_ref())
+        {
             // Ignore transient FrameUnavailable (resize/DPI churn); the next burst re-presents.
-            let _ = renderer.clear_and_present(0.0, 0.0, 0.0, 1.0);
+            let _ = renderer.render(term, scroll_offset, true);
         }
     }
 

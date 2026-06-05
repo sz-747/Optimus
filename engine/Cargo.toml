@@ -24,6 +24,10 @@ windows = { version = "0.62", features = [
 # `SurfaceTargetUnsafe::SwapChainPanel` (gated behind `#[cfg(dx12)]`). See plan §5.1 / §11.
 # DX12 is the only backend we want for the WinUI 3 SwapChainPanel composition path.
 wgpu = { version = "=29.0.1", default-features = false, features = ["dx12"] }
+# GPU glyph atlas + in-pass text renderer (plan §2.2 / §8 U6). 0.11 targets wgpu 29.
+glyphon = "0.11"
+# POD casting for the quad instance/uniform buffers.
+bytemuck = { version = "1", features = ["derive"] }
 # Minimal executor to block on wgpu's async adapter/device requests from the render thread.
 pollster = "0.4"
 # VT core (plan §2.2 / §8 U4): parses the shell's output into a grid + scrollback and

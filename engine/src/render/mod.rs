@@ -16,6 +16,13 @@ use std::ffi::c_void;
 /// Spike 1 C ABI (`cmux_spike_*`) that lets the WinUI 3 host drive this renderer.
 pub mod panel_ffi;
 
+/// Instanced solid-color quads (cell backgrounds, cursor, selection) — plan §8 U6.
+pub mod grid;
+/// glyphon glyph atlas + text renderer, and cell metrics — plan §8 U6.
+pub mod text;
+/// The terminal renderer: composes the surface + quad + text layers into a frame.
+pub mod terminal;
+
 /// A bound DX12 surface targeting a WinUI 3 `SwapChainPanel`, plus the device/queue
 /// needed to render and present into it.
 ///
@@ -23,10 +30,10 @@ pub mod panel_ffi;
 /// freely `Send`, so one thread owns the device + surface).
 pub struct PanelRenderer {
     _instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
+    pub(crate) surface: wgpu::Surface<'static>,
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+    pub(crate) config: wgpu::SurfaceConfiguration,
 }
 
 impl PanelRenderer {
@@ -95,6 +102,16 @@ impl PanelRenderer {
             queue,
             config,
         })
+    }
+
+    /// The surface's texture format (sRGB) — needed to build the quad/text pipelines.
+    pub(crate) fn format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
+    /// Current surface size in physical pixels.
+    pub(crate) fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
     }
 
     /// Resize the surface to `width`×`height` physical pixels (driven by `SizeChanged` /
@@ -175,6 +192,8 @@ pub enum RenderError {
     /// The next swapchain frame could not be acquired this tick (timeout/occluded/
     /// outdated/lost/validation). Non-fatal — the caller skips the frame and retries.
     FrameUnavailable(&'static str),
+    /// glyphon text atlas prepare/render failure.
+    Text(String),
 }
 
 impl std::fmt::Display for RenderError {
@@ -184,6 +203,7 @@ impl std::fmt::Display for RenderError {
             RenderError::NoAdapter => write!(f, "no compatible DX12 adapter"),
             RenderError::RequestDevice(e) => write!(f, "request_device failed: {e}"),
             RenderError::FrameUnavailable(why) => write!(f, "frame unavailable: {why}"),
+            RenderError::Text(e) => write!(f, "text renderer: {e}"),
         }
     }
 }
