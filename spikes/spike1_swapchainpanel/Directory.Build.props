@@ -1,0 +1,43 @@
+<Project>
+
+  <!--
+    WinUI 3 unpackaged build fix for `dotnet build` (plan §9 ".NET 9 unpackaged publish").
+
+    The Windows App SDK's MrtCore.PriGen.targets generates `resources.pri` (required at
+    runtime — it indexes the framework's themed XAML) using two MSBuild *task* assemblies:
+        Microsoft.Build.Packaging.Pri.Tasks.dll   (the ExpandPriContent / PRI tasks)
+        Microsoft.Build.AppxPackage.dll            (the Appx packaging tasks)
+    Those ship ONLY with Visual Studio / VS Build Tools MSBuild, never with the .NET SDK.
+    The targets resolve them under $(MSBuildExtensionsPath), which — when building with
+    `dotnet build` — is the .NET SDK folder (no AppxPackage subfolder) → MSB4062.
+
+    Why not just build with VS's MSBuild.exe? The installed VS MSBuild is 17.9, but the
+    .NET 9 SDK requires MSBuild 17.12+. So we keep the modern SDK MSBuild (via `dotnet`)
+    and only borrow VS's task DLLs by overriding the two assembly-path properties below.
+    The targets set them with Condition="== ''", so an explicit value here always wins.
+
+    Probed across the standard VS 2022 editions; only overrides when the SDK's own copy
+    is genuinely absent, so this is a no-op on machines with a complete SDK toolchain.
+  -->
+
+  <PropertyGroup>
+    <_SdkAppxPriTask>$(MSBuildExtensionsPath)\Microsoft\VisualStudio\v$(VisualStudioVersion)\AppxPackage\Microsoft.Build.Packaging.Pri.Tasks.dll</_SdkAppxPriTask>
+    <_NeedsVsAppxTasks Condition="!Exists('$(_SdkAppxPriTask)')">true</_NeedsVsAppxTasks>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_NeedsVsAppxTasks)' == 'true'">
+    <_VsRoot>$(ProgramFiles)\Microsoft Visual Studio\2022</_VsRoot>
+    <_AppxRel>MSBuild\Microsoft\VisualStudio\v17.0\AppxPackage\</_AppxRel>
+
+    <_VsAppxToolsPath Condition="'$(_VsAppxToolsPath)' == '' and Exists('$(_VsRoot)\Enterprise\$(_AppxRel)Microsoft.Build.Packaging.Pri.Tasks.dll')">$(_VsRoot)\Enterprise\$(_AppxRel)</_VsAppxToolsPath>
+    <_VsAppxToolsPath Condition="'$(_VsAppxToolsPath)' == '' and Exists('$(_VsRoot)\Professional\$(_AppxRel)Microsoft.Build.Packaging.Pri.Tasks.dll')">$(_VsRoot)\Professional\$(_AppxRel)</_VsAppxToolsPath>
+    <_VsAppxToolsPath Condition="'$(_VsAppxToolsPath)' == '' and Exists('$(_VsRoot)\Community\$(_AppxRel)Microsoft.Build.Packaging.Pri.Tasks.dll')">$(_VsRoot)\Community\$(_AppxRel)</_VsAppxToolsPath>
+    <_VsAppxToolsPath Condition="'$(_VsAppxToolsPath)' == '' and Exists('$(_VsRoot)\BuildTools\$(_AppxRel)Microsoft.Build.Packaging.Pri.Tasks.dll')">$(_VsRoot)\BuildTools\$(_AppxRel)</_VsAppxToolsPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_VsAppxToolsPath)' != ''">
+    <PriProjTaskAssembly>$(_VsAppxToolsPath)Microsoft.Build.Packaging.Pri.Tasks.dll</PriProjTaskAssembly>
+    <AppxMSBuildTaskAssembly>$(_VsAppxToolsPath)Microsoft.Build.AppxPackage.dll</AppxMSBuildTaskAssembly>
+  </PropertyGroup>
+
+</Project>

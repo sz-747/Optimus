@@ -13,6 +13,9 @@
 
 use std::ffi::c_void;
 
+/// Spike 1 C ABI (`cmux_spike_*`) that lets the WinUI 3 host drive this renderer.
+pub mod panel_ffi;
+
 /// A bound DX12 surface targeting a WinUI 3 `SwapChainPanel`, plus the device/queue
 /// needed to render and present into it.
 ///

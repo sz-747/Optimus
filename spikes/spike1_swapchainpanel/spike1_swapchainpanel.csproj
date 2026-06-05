@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Spike 1 (plan §7.1, GATE): minimal unpackaged WinUI 3 host that proves an
+    externally-created wgpu DX12 swapchain composes into a SwapChainPanel.
+
+    Self-contained + unpackaged so it runs without a pre-installed Windows App SDK
+    runtime and without MSIX packaging — this is also the plan's ".NET 9 unpackaged
+    publish" risk (§9) being de-risked early.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Spike1</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4188" />
+  </ItemGroup>
+
+  <!--
+    Copy the Rust engine cdylib next to the app so DllImport("cmux_engine.dll") resolves it.
+    Built separately by `cargo build` in ..\..\engine (debug profile). The Condition keeps the
+    C# build from failing if the DLL hasn't been built yet — but it must exist before running.
+  -->
+  <ItemGroup>
+    <_CmuxEngineDll Include="..\..\engine\target\debug\cmux_engine.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('@(_CmuxEngineDll)')">
+    <None Include="@(_CmuxEngineDll)">
+      <Link>cmux_engine.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
