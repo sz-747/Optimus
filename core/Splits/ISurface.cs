@@ -1,3 +1,5 @@
+using System;
+
 namespace Cmux.Core;
 
 /// <summary>
@@ -10,6 +12,12 @@ public interface ISurface
 {
     /// <summary>The surface's stable id (matches the model's <see cref="SurfaceId"/>).</summary>
     SurfaceId Id { get; }
+
+    /// <summary>
+    /// Raised (on the UI thread) when the shell sets the window/tab title (OSC 0/2). The owning
+    /// pane projects it into the tab header text (U4); never bound to a live observable (KTD5).
+    /// </summary>
+    event Action<string>? TitleChanged;
 
     /// <summary>
     /// Composite this surface (<c>true</c>) or collapse it out of the composition tree

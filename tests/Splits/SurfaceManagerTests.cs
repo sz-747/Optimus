@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Cmux.Core;
 using Xunit;
@@ -24,6 +25,10 @@ public sealed class SurfaceManagerTests
 
         public SurfaceId Id { get; }
         public int ShutdownCount { get; private set; }
+
+        public event Action<string>? TitleChanged;
+
+        public void RaiseTitle(string title) => TitleChanged?.Invoke(title);
 
         public void SetActive(bool active) => _log.Add($"active:{Id}:{active}");
         public void FocusSurface() => _log.Add($"focus:{Id}");
