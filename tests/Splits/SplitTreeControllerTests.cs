@@ -276,6 +276,50 @@ public sealed class SplitTreeControllerTests
         Assert.True(s3.Value > s2.Value); // monotonic, never reused
     }
 
+    // ---- U7: zoom (transient view state) -----------------------------------------------------
+
+    [Fact] // Covers U7.
+    public void ToggleZoom_zooms_the_focused_pane_and_toggles_off()
+    {
+        var c = new SplitTreeController();
+        c.Split(c.FocusedPane, Orientation.Vertical);
+        PaneId focused = c.FocusedPane;
+
+        Assert.Null(c.ZoomedPane);
+        c.ToggleZoom();
+        Assert.Equal(focused, c.ZoomedPane);
+        Assert.Equal(focused, c.Snapshot().ZoomedPane); // carried on the snapshot
+        c.ToggleZoom();
+        Assert.Null(c.ZoomedPane);
+    }
+
+    [Fact] // Covers U7.
+    public void ClearZoom_clears_when_zoomed_and_is_a_noop_otherwise()
+    {
+        var c = new SplitTreeController();
+        c.ToggleZoom();
+        Assert.NotNull(c.ZoomedPane);
+
+        c.ClearZoom();
+        Assert.Null(c.ZoomedPane);
+
+        c.ClearZoom(); // no-op, must not throw
+        Assert.Null(c.ZoomedPane);
+    }
+
+    [Fact] // Covers U7 — zoom must not survive its pane being healed away.
+    public void Closing_the_zoomed_pane_clears_the_zoom()
+    {
+        var c = new SplitTreeController();
+        c.Split(c.FocusedPane, Orientation.Vertical); // focus the new pane
+        c.ToggleZoom();
+        Assert.Equal(c.FocusedPane, c.ZoomedPane);
+
+        c.CloseTab(c.FocusedSurface!.Value); // remove the zoomed pane's last tab → pane heals away
+
+        Assert.Null(c.ZoomedPane);
+    }
+
     // ---- Surface lifecycle events (host-wiring contract; supports U2) ------------------------
 
     [Fact]
