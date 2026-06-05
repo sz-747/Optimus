@@ -83,7 +83,11 @@ impl PanelRenderer {
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("cmux-engine device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                // Use the adapter's real limits, not downlevel_defaults(): the latter caps
+                // max_texture_dimension_2d at 2048, which makes Surface::configure panic for any
+                // window larger than 2048px in either dimension (e.g. a 200%/4K monitor). DX12
+                // adapters support 16384, so adopt whatever this adapter actually offers.
+                required_limits: adapter.limits(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 trace: wgpu::Trace::Off,
