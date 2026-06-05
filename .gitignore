@@ -21,6 +21,9 @@ Cargo.lock.orig
 # ── Agent worktrees (ce-work parallel isolation) ──
 .claude/worktrees/
 
+# ── Agent tooling (not part of the project) ──
+.codex/
+
 # ── Misc ──
 *.log
 Thumbs.db
