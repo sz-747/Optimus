@@ -28,6 +28,7 @@ internal sealed class PaneTabStrip : Grid
     private static readonly SolidColorBrush MutedText = new(Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A));
 
     private readonly StackPanel _tabs;
+    private readonly Button _zoomButton;
 
     /// <summary>Raised when the user clicks a tab chip body.</summary>
     public event Action<SurfaceId>? TabSelected;
@@ -37,6 +38,15 @@ internal sealed class PaneTabStrip : Grid
 
     /// <summary>Raised when the user clicks the trailing "+" button.</summary>
     public event Action? NewTabRequested;
+
+    /// <summary>Raised when the user clicks the split-right button (side-by-side split).</summary>
+    public event Action? SplitRightRequested;
+
+    /// <summary>Raised when the user clicks the split-down button (stacked split).</summary>
+    public event Action? SplitDownRequested;
+
+    /// <summary>Raised when the user clicks the zoom button.</summary>
+    public event Action? ZoomToggleRequested;
 
     public PaneTabStrip()
     {
@@ -54,10 +64,33 @@ internal sealed class PaneTabStrip : Grid
         Grid.SetColumn(_tabs, 0);
         Children.Add(_tabs);
 
+        // Trailing action cluster: the discoverable split/zoom affordances beside the new-tab "+".
+        // Each surfaces its keyboard chord on hover (R3) and fires an intent event PaneView routes
+        // through the same dispatch path the chord uses (R1/R6).
+        var actions = new StackPanel
+        {
+            Orientation = Microsoft.UI.Xaml.Controls.Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+
+        Button splitRight = MakeFlatButton("◧", $"Split right ({ShortcutMap.DescribeChord(ShortcutAction.SplitRight)})");
+        splitRight.Click += (_, _) => SplitRightRequested?.Invoke();
+        actions.Children.Add(splitRight);
+
+        Button splitDown = MakeFlatButton("⬓", $"Split down ({ShortcutMap.DescribeChord(ShortcutAction.SplitDown)})");
+        splitDown.Click += (_, _) => SplitDownRequested?.Invoke();
+        actions.Children.Add(splitDown);
+
+        _zoomButton = MakeFlatButton("⤢", $"Zoom ({ShortcutMap.DescribeChord(ShortcutAction.ToggleZoom)})");
+        _zoomButton.Click += (_, _) => ZoomToggleRequested?.Invoke();
+        actions.Children.Add(_zoomButton);
+
         Button newTab = MakeFlatButton("+", "New tab");
         newTab.Click += (_, _) => NewTabRequested?.Invoke();
-        Grid.SetColumn(newTab, 1);
-        Children.Add(newTab);
+        actions.Children.Add(newTab);
+
+        Grid.SetColumn(actions, 1);
+        Children.Add(actions);
     }
 
     /// <summary>Rebuild the chips from the projected headers (cheap; called per snapshot change).</summary>
@@ -68,6 +101,16 @@ internal sealed class PaneTabStrip : Grid
         {
             _tabs.Children.Add(MakeChip(header));
         }
+    }
+
+    /// <summary>
+    /// Reflect whether this pane is the zoomed one on the zoom button's appearance (R5). Driven from
+    /// the controller snapshot's zoom state via <see cref="PaneView"/>; a pure view update.
+    /// </summary>
+    public void SetZoomActive(bool active)
+    {
+        _zoomButton.Foreground = active ? ActiveText : MutedText;
+        _zoomButton.Background = active ? SelectedChip : Transparent;
     }
 
     private FrameworkElement MakeChip(TabHeaderDto header)

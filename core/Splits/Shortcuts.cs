@@ -106,6 +106,52 @@ public static class ShortcutMap
         Defaults.TryGetValue(new KeyChord(modifiers, keyCode), out ShortcutAction action) ? action : null;
 
     /// <summary>
+    /// Describe the default chord bound to <paramref name="action"/> as a display string
+    /// (e.g. <c>"Ctrl+Shift+D"</c>), sourced from <see cref="Defaults"/> so tooltip text never
+    /// drifts from the live bindings (R3). Returns an empty string if the action is unbound.
+    /// </summary>
+    public static string DescribeChord(ShortcutAction action)
+    {
+        foreach (KeyValuePair<KeyChord, ShortcutAction> entry in Defaults)
+        {
+            if (entry.Value == action)
+            {
+                return Describe(entry.Key);
+            }
+        }
+        return string.Empty;
+    }
+
+    /// <summary>Format a chord as <c>Mod(+Mod)+Key</c> with a stable modifier order.</summary>
+    private static string Describe(KeyChord chord)
+    {
+        var parts = new List<string>(4);
+        if (chord.Modifiers.HasFlag(ChordModifiers.Ctrl)) parts.Add("Ctrl");
+        if (chord.Modifiers.HasFlag(ChordModifiers.Shift)) parts.Add("Shift");
+        if (chord.Modifiers.HasFlag(ChordModifiers.Alt)) parts.Add("Alt");
+        if (chord.Modifiers.HasFlag(ChordModifiers.Super)) parts.Add("Super");
+        parts.Add(KeyName(chord.KeyCode));
+        return string.Join("+", parts);
+    }
+
+    /// <summary>Display name for a virtual-key code used by the default table.</summary>
+    private static string KeyName(int keyCode) => keyCode switch
+    {
+        VKey.Tab => "Tab",
+        VKey.Left => "Left",
+        VKey.Up => "Up",
+        VKey.Right => "Right",
+        VKey.Down => "Down",
+        VKey.D0 => "0",
+        VKey.D => "D",
+        VKey.E => "E",
+        VKey.T => "T",
+        VKey.W => "W",
+        VKey.Z => "Z",
+        _ => $"0x{keyCode:X2}",
+    };
+
+    /// <summary>
     /// Apply <paramref name="action"/> to the focused pane/surface of <paramref name="controller"/>.
     /// Operations that have no target (e.g. close with no focused surface) are silent no-ops.
     /// </summary>

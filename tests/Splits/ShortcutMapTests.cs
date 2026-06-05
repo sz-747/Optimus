@@ -111,4 +111,45 @@ public sealed class ShortcutMapTests
         ShortcutMap.Apply(c, ShortcutAction.ToggleZoom);
         Assert.Null(c.ZoomedPane);
     }
+
+    // ---- Chord description (tooltip text) ----------------------------------------------------
+
+    [Theory]
+    [InlineData(ShortcutAction.SplitRight, "Ctrl+Shift+D")]
+    [InlineData(ShortcutAction.SplitDown, "Ctrl+Shift+E")]
+    [InlineData(ShortcutAction.ToggleZoom, "Ctrl+Shift+Z")]
+    [InlineData(ShortcutAction.NewTab, "Ctrl+Shift+T")]
+    [InlineData(ShortcutAction.CloseTab, "Ctrl+Shift+W")]
+    [InlineData(ShortcutAction.Equalize, "Ctrl+Shift+0")]
+    [InlineData(ShortcutAction.FocusLeft, "Ctrl+Shift+Left")]
+    [InlineData(ShortcutAction.FocusDown, "Ctrl+Shift+Down")]
+    public void DescribeChord_formats_the_bound_chord(ShortcutAction action, string expected)
+    {
+        Assert.Equal(expected, ShortcutMap.DescribeChord(action));
+    }
+
+    [Fact]
+    public void DescribeChord_uses_a_single_modifier_when_the_chord_has_one()
+    {
+        // Ctrl+Tab carries no Shift; the formatter must not emit a stray modifier.
+        Assert.Equal("Ctrl+Tab", ShortcutMap.DescribeChord(ShortcutAction.NextTab));
+        Assert.Equal("Ctrl+Shift+Tab", ShortcutMap.DescribeChord(ShortcutAction.PreviousTab));
+    }
+
+    [Fact]
+    public void DescribeChord_returns_a_nonempty_string_for_every_action()
+    {
+        // Coverage parity with Defaults: every action is reachable, so every action describes.
+        foreach (ShortcutAction action in Enum.GetValues<ShortcutAction>())
+        {
+            Assert.False(string.IsNullOrEmpty(ShortcutMap.DescribeChord(action)), $"no chord text for {action}");
+        }
+    }
+
+    [Fact]
+    public void DescribeChord_orders_modifiers_ctrl_before_shift()
+    {
+        // Stable order regardless of how the flags enum happens to combine.
+        Assert.StartsWith("Ctrl+Shift+", ShortcutMap.DescribeChord(ShortcutAction.SplitRight));
+    }
 }

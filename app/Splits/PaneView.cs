@@ -53,6 +53,13 @@ internal sealed class PaneView : UserControl
         _strip.TabClosed += id => _controller.CloseTab(id);
         _strip.NewTabRequested += () => _controller.NewTab(_paneId);
 
+        // Discoverable split/zoom buttons: focus this pane, then run the same action the keyboard
+        // chord runs, so a button can never drift from its shortcut (R2) and always acts on the pane
+        // whose strip was clicked (R4).
+        _strip.SplitRightRequested += () => DispatchOnThisPane(ShortcutAction.SplitRight);
+        _strip.SplitDownRequested += () => DispatchOnThisPane(ShortcutAction.SplitDown);
+        _strip.ZoomToggleRequested += () => DispatchOnThisPane(ShortcutAction.ToggleZoom);
+
         // Pointer/programmatic focus landing anywhere in this pane's subtree (a terminal click)
         // makes it the model's focused pane, so subsequent keyboard ops target it (R7/R8). Guarded
         // so re-focusing the already-focused pane raises no snapshot churn and cannot loop with the
@@ -105,6 +112,21 @@ internal sealed class PaneView : UserControl
         }
 
         RenderStrip(leaf.Tabs, leaf.Selected);
+        _strip.SetZoomActive(snapshot.ZoomedPane == _paneId);
+    }
+
+    /// <summary>
+    /// Focus this pane (if it isn't already) and run <paramref name="action"/> through the same
+    /// dispatch path the keyboard uses, so a strip button is a true alternative entry point to its
+    /// chord (R2) and targets the clicked pane regardless of prior focus (R4).
+    /// </summary>
+    private void DispatchOnThisPane(ShortcutAction action)
+    {
+        if (_controller.FocusedPane != _paneId)
+        {
+            _controller.FocusPane(_paneId);
+        }
+        ShortcutMap.Apply(_controller, action);
     }
 
     private void OnPaneGotFocus(object sender, RoutedEventArgs e)
