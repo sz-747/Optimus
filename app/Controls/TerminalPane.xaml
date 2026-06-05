@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Cmux.Controls.TerminalPane"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- The GPU surface the Rust engine renders into (plan §5.2). IsTabStop makes it
+         focusable so it receives keyboard input (U7); the engine owns the swapchain. -->
+    <SwapChainPanel x:Name="Panel" IsTabStop="True" />
+</UserControl>

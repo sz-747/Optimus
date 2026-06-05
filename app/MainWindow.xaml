@@ -2,14 +2,11 @@
 <Window
     x:Class="Cmux.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Cmux.Controls">
 
-    <!-- Phase 1: a single terminal pane fills the window. The TerminalPane control
-         (hosting the SwapChainPanel + input) is wired in U6/U7. -->
+    <!-- Phase 1: a single terminal pane fills the window. -->
     <Grid x:Name="Root" Background="#0C0C0C">
-        <TextBlock x:Name="Placeholder"
-                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                   Foreground="#CCCCCC" FontFamily="Cascadia Mono, Consolas"
-                   FontSize="14" Text="cmux — scaffolding" />
+        <controls:TerminalPane x:Name="Pane" />
     </Grid>
 </Window>
