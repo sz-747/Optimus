@@ -37,6 +37,11 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4188" />
   </ItemGroup>
 
+  <!-- The UI-free model heart (Phase 2 U1/KTD3): split tree, controller, surface manager. -->
+  <ItemGroup>
+    <ProjectReference Include="..\core\Cmux.Core.csproj" />
+  </ItemGroup>
+
   <!--
     Build the Rust engine before the C# build, then stage cmux_engine.dll next to the
     app so DllImport("cmux_engine.dll") resolves it. cargo is invoked from its known
