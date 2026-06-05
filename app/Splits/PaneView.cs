@@ -27,12 +27,22 @@ internal sealed class PaneView : UserControl
 {
     private static readonly SolidColorBrush ContentBackground = new(Color.FromArgb(0xFF, 0x0C, 0x0C, 0x0C));
 
+    // Focus indicator (R7): the focused pane is outlined in teal; every other pane's border is
+    // transparent. The border lives on the pane's root grid so it frames the whole pane (tab strip
+    // and terminal). The engine has no focus concept and draws a solid cursor in every surface, so
+    // this outline is the only cmux-level cue for which pane currently receives keystrokes. The
+    // thickness is constant — only the brush toggles — so gaining/losing focus never reflows the pane.
+    private const double FocusBorderThickness = 2.0;
+    private static readonly SolidColorBrush FocusedBorder = new(Color.FromArgb(0xFF, 0x2D, 0xD4, 0xBF));
+    private static readonly SolidColorBrush UnfocusedBorder = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
+
     private readonly PaneId _paneId;
     private readonly SplitTreeController _controller;
     private readonly SurfaceManager _surfaces;
 
     private readonly PaneTabStrip _strip = new();
     private readonly Grid _contentHost = new() { Background = ContentBackground };
+    private readonly Grid _root = new();
 
     // Surfaces currently parented in this pane's content host, plus the title handler we attached to
     // each (so we can detach on removal). Keyed by surface id.
@@ -66,14 +76,17 @@ internal sealed class PaneView : UserControl
         // host's focus-follows-snapshot step.
         this.GotFocus += OnPaneGotFocus;
 
-        var root = new Grid();
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        // Constant teal-border slot for the focus outline: starts transparent and Sync paints it on
+        // the focused pane from the first snapshot (toggling colour, never thickness, avoids reflow).
+        _root.BorderThickness = new Thickness(FocusBorderThickness);
+        _root.BorderBrush = UnfocusedBorder;
         Grid.SetRow(_strip, 0);
         Grid.SetRow(_contentHost, 1);
-        root.Children.Add(_strip);
-        root.Children.Add(_contentHost);
-        Content = root;
+        _root.Children.Add(_strip);
+        _root.Children.Add(_contentHost);
+        Content = _root;
     }
 
     /// <summary>
@@ -113,7 +126,7 @@ internal sealed class PaneView : UserControl
 
         RenderStrip(leaf.Tabs, leaf.Selected);
         _strip.SetZoomActive(snapshot.ZoomedPane == _paneId);
-        _strip.SetPaneActive(snapshot.FocusedPane == _paneId);
+        _root.BorderBrush = snapshot.FocusedPane == _paneId ? FocusedBorder : UnfocusedBorder;
     }
 
     /// <summary>
