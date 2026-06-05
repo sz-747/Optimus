@@ -19,19 +19,17 @@ use crate::pty::{default_shell, ConPty};
 use crate::render::terminal::{SelectionSpan, TerminalRenderer};
 use crate::vt::{build_terminal, SharedSink};
 
-/// A raw COM pointer moved to the render thread. The `SwapChainPanel`'s native interface is
-/// agile (DirectX-XAML interop is designed to be driven from a render thread), so handing the
-/// pointer across threads is sound; the newtype just satisfies `Send`.
-struct SendPtr(*mut c_void);
-// SAFETY: the pointer is an ISwapChainPanel* used only by the render thread to bind a surface.
-unsafe impl Send for SendPtr {}
-
 /// Messages posted to the render thread. Variants carrying a `SyncSender` are synchronous:
 /// the FFI caller blocks until the render thread replies (attach/resize/selection are rare and
 /// must report success/values back across the boundary).
 enum RenderCmd {
-    Attach {
-        panel: SendPtr,
+    /// Hand the render thread a renderer already bound to the panel. The renderer is built on
+    /// the **UI thread** (in [`Engine::attach_swapchain_panel`]) because the first
+    /// `surface.configure` calls `ISwapChainPanelNative::SetSwapChain`, which has UI-thread
+    /// affinity. Everything afterward (resize → `ResizeBuffers`, present) is thread-agnostic, so
+    /// the render thread owns the renderer from here on.
+    AttachRenderer {
+        renderer: Box<TerminalRenderer>,
         width: u32,
         height: u32,
         reply: SyncSender<Result<(), String>>,
@@ -118,18 +116,31 @@ impl Engine {
         }
     }
 
-    /// Bind the wgpu renderer to the WinUI 3 `SwapChainPanel` behind `panel` (UI thread).
+    /// Bind the wgpu renderer to the WinUI 3 `SwapChainPanel` behind `panel`.
+    ///
+    /// **Must be called on the UI thread** (plan §5.2). wgpu's first `surface.configure` calls
+    /// `ISwapChainPanelNative::SetSwapChain`, which has UI-thread affinity — so the renderer is
+    /// constructed *here*, on the caller's thread, and only then handed to the render thread.
+    /// (Building it on the render thread fails surface configuration with "Invalid surface".)
     ///
     /// # Safety
-    /// `panel` must be a valid, live `ISwapChainPanel*` for the engine's lifetime.
+    /// `panel` must be a valid, live `ISwapChainPanel*` for the engine's lifetime, and this must
+    /// be called on the thread that owns the `SwapChainPanel`.
     pub unsafe fn attach_swapchain_panel(&mut self, panel: *mut c_void) -> Result<(), String> {
         // Bind at a placeholder size; the C# resize/DPI loop (U9) reconfigures immediately with
-        // real physical pixels. Derive a non-degenerate guess from the initial grid.
+        // real physical pixels. Derive a non-degenerate guess from the initial grid. DPI scale is
+        // a placeholder 1.0 — the first resize sets the real scale via `renderer.set_scale`.
         let width = (self.options.initial_cols as u32 * 8).max(1);
         let height = (self.options.initial_rows as u32 * 16).max(1);
+
+        // SAFETY: `panel` is a valid ISwapChainPanel* (caller's contract) and we are on the UI
+        // thread, satisfying SetSwapChain's affinity requirement.
+        let renderer = unsafe { TerminalRenderer::new(panel, width, height, 1.0) }
+            .map_err(|e| format!("attach failed: {e}"))?;
+
         let (reply, wait) = std::sync::mpsc::sync_channel(0);
-        self.send(RenderCmd::Attach {
-            panel: SendPtr(panel),
+        self.send(RenderCmd::AttachRenderer {
+            renderer: Box::new(renderer),
             width,
             height,
             reply,
@@ -356,26 +367,19 @@ impl RenderState {
     /// Handle one command. Returns `true` if the loop should stop (Shutdown).
     fn handle(&mut self, cmd: RenderCmd) -> bool {
         match cmd {
-            RenderCmd::Attach {
-                panel,
+            RenderCmd::AttachRenderer {
+                renderer,
                 width,
                 height,
                 reply,
             } => {
-                let dpi_scale = self.dpi as f32 / 96.0;
-                let result = unsafe { TerminalRenderer::new(panel.0, width, height, dpi_scale) };
-                match result {
-                    Ok(renderer) => {
-                        self.renderer = Some(renderer);
-                        self.pixel_width = width;
-                        self.pixel_height = height;
-                        self.needs_present = true;
-                        let _ = reply.send(Ok(()));
-                    }
-                    Err(e) => {
-                        let _ = reply.send(Err(format!("attach failed: {e}")));
-                    }
-                }
+                // The renderer was already built + bound on the UI thread (SetSwapChain affinity);
+                // we just take ownership so all subsequent drawing/resizing happens here.
+                self.renderer = Some(*renderer);
+                self.pixel_width = width;
+                self.pixel_height = height;
+                self.needs_present = true;
+                let _ = reply.send(Ok(()));
             }
             RenderCmd::Detach => {
                 self.renderer = None;
