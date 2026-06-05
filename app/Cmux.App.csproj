@@ -33,8 +33,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="CommunityToolkit.WinUI.Controls.Sizers" Version="8.2.251219" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4188" />
+  </ItemGroup>
+
+  <!-- The UI-free model heart (Phase 2 U1/KTD3): split tree, controller, surface manager. -->
+  <ItemGroup>
+    <ProjectReference Include="..\core\Cmux.Core.csproj" />
   </ItemGroup>
 
   <!--
@@ -56,14 +62,11 @@
 
   <Target Name="BuildCmuxEngine" BeforeTargets="BeforeBuild" Condition="'$(SkipCmuxEngineBuild)' != 'true'">
     <Message Importance="high" Text="cmux: cargo build ($(EngineProfile)) in $(EngineDir)" />
-    <Exec Command="&quot;$(CargoExe)&quot; build $(EngineCargoFlag)"
-          WorkingDirectory="$(EngineDir)"
-          ContinueOnError="true" />
+    <Exec Command="&quot;$(CargoExe)&quot; build $(EngineCargoFlag)" WorkingDirectory="$(EngineDir)" ContinueOnError="true" />
   </Target>
 
   <Target Name="EnsureCmuxEngineDll" AfterTargets="BuildCmuxEngine" BeforeTargets="BeforeBuild">
-    <Error Condition="!Exists('$(EngineDll)')"
-           Text="cmux_engine.dll not found at $(EngineDll). Build the engine first: run build\build.ps1, or `cargo build` in engine\ ." />
+    <Error Condition="!Exists('$(EngineDll)')" Text="cmux_engine.dll not found at $(EngineDll). Build the engine first: run build\build.ps1, or `cargo build` in engine\ ." />
   </Target>
 
   <ItemGroup>

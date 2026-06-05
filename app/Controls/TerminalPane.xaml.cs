@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using Cmux.Core;
 using Cmux.Interop;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
@@ -12,19 +13,22 @@ using Windows.UI.Core;
 namespace Cmux.Controls;
 
 /// <summary>
-/// One terminal pane (plan §8, Phase 1): hosts the <see cref="SwapChainPanel"/> the Rust engine
-/// renders into, owns the <see cref="EngineHandle"/> lifecycle, and forwards keyboard/pointer
-/// input across the FFI.
+/// One terminal surface (plan §8, Phase 1; Phase 2 U2): hosts the <see cref="SwapChainPanel"/> the
+/// Rust engine renders into, owns the <see cref="EngineHandle"/> lifecycle, and forwards
+/// keyboard/pointer input across the FFI. Implements <see cref="ISurface"/> so the Phase-2
+/// <c>SurfaceManager</c> can own its create/activate/focus/teardown lifecycle from the model plane.
 ///
 /// Responsibilities by unit:
 /// <list type="bullet">
-///   <item>Lifecycle — create the engine, attach the panel, spawn the shell, tear down cleanly.</item>
+///   <item>Lifecycle — create the engine, attach the panel <b>exactly once</b> (KTD9/R10),
+///         spawn the shell, and tear down cleanly and <b>idempotently</b>, driven explicitly by
+///         the surface manager rather than by XAML <c>Unloaded</c> (which fires on re-parent).</item>
 ///   <item>U7 input — KeyDown/KeyUp → <c>send_key</c> (control keys), CharacterReceived →
 ///         <c>send_text</c> (layout/IME/dead-key text), pointer/wheel → <c>send_mouse</c>/<c>send_scroll</c>.</item>
 ///   <item>U9 resize/DPI — SizeChanged + CompositionScaleChanged → physical pixels → <c>resize</c>.</item>
 /// </list>
 /// </summary>
-public sealed partial class TerminalPane : UserControl
+public sealed partial class TerminalPane : UserControl, ISurface
 {
     private EngineHandle? _engine;
 
@@ -32,9 +36,17 @@ public sealed partial class TerminalPane : UserControl
     // destroyed (which drops wgpu's own ref) — see <see cref="Shutdown"/>.
     private IntPtr _panelNative;
 
-    private bool _attached;
+    // Attach-once / shutdown-once guard (KTD9/R10): re-parenting fires Loaded/Unloaded again, but
+    // the panel must attach exactly once and the engine tear down exactly once.
+    private readonly SurfaceLifecycleGuard _lifecycle = new();
     private bool _started;
-    private bool _disposed;
+
+    private readonly SurfaceId _id;
+    private readonly string? _cwd;
+    private readonly string? _cmdline;
+
+    /// <summary>This surface's stable id (<see cref="ISurface.Id"/>).</summary>
+    public SurfaceId Id => _id;
 
     /// <summary>Raised (on the UI thread) when the shell sets the window/tab title (OSC 0/2).</summary>
     public event Action<string>? TitleChanged;
@@ -42,11 +54,26 @@ public sealed partial class TerminalPane : UserControl
     /// <summary>Raised (on the UI thread) when the shell process exits, with its exit code.</summary>
     public event Action<long>? ChildExited;
 
-    public TerminalPane()
+    /// <summary>Parameterless ctor kept for the XAML loader; real surfaces use the id ctor.</summary>
+    public TerminalPane() : this(default, null, null)
     {
+    }
+
+    /// <summary>
+    /// Create a surface bound to <paramref name="id"/>, optionally spawning in <paramref name="cwd"/>
+    /// with a specific <paramref name="cmdline"/> (empty → the engine's default shell).
+    /// </summary>
+    public TerminalPane(SurfaceId id, string? cwd = null, string? cmdline = null)
+    {
+        _id = id;
+        _cwd = cwd;
+        _cmdline = cmdline;
+
         this.InitializeComponent();
         this.Loaded += OnLoaded;
-        this.Unloaded += OnUnloaded;
+        // NOTE: deliberately NOT wiring Unloaded → Shutdown. Tree restructuring re-parents this
+        // control (Unloaded then Loaded); teardown is driven explicitly by the SurfaceManager so a
+        // re-parent never destroys a live shell (KTD9/R10).
 
         Panel.SizeChanged += OnPanelSizeChanged;
         Panel.CompositionScaleChanged += OnCompositionScaleChanged;
@@ -65,7 +92,9 @@ public sealed partial class TerminalPane : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (_disposed || _attached)
+        // Attach exactly once: a re-parent's second Loaded (or a post-shutdown one) is a no-op
+        // so we neither recreate the engine nor re-bind the wgpu surface (KTD9/R10).
+        if (!_lifecycle.TryAttach())
         {
             return;
         }
@@ -77,25 +106,22 @@ public sealed partial class TerminalPane : UserControl
         // surface (plan §5.2). We own one ref until teardown.
         _panelNative = SwapChainPanelNativeInterop.GetNativePointer(Panel);
         _engine.AttachSwapChainPanel(_panelNative);
-        _attached = true;
 
         Configure();
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e) => Shutdown();
-
     /// <summary>
-    /// Tear down the engine and release the panel COM ref. Idempotent. Called from
-    /// <c>Unloaded</c> and from the window's <c>Closed</c> handler (plan §7.2: render thread
-    /// stopped before panel disposal).
+    /// Tear down the engine and release the panel COM ref. Idempotent (<see cref="ISurface.Shutdown"/>).
+    /// Driven explicitly by the surface manager / window <c>Closed</c> handler — never by
+    /// <c>Unloaded</c> — so the render thread stops before the panel is disposed (plan §7.2) and a
+    /// re-parent cannot tear down a live shell (KTD9/R10).
     /// </summary>
     public void Shutdown()
     {
-        if (_disposed)
+        if (!_lifecycle.TryShutdown())
         {
             return;
         }
-        _disposed = true;
 
         try
         {
@@ -115,13 +141,24 @@ public sealed partial class TerminalPane : UserControl
     }
 
     /// <summary>
+    /// Composite this surface or collapse it out of the composition tree (<see cref="ISurface.SetActive"/>).
+    /// Inactive surfaces are <see cref="Visibility.Collapsed"/> so they cost no composition while
+    /// their engine keeps the shell alive in the background (R3/R11, KTD2).
+    /// </summary>
+    public void SetActive(bool active) =>
+        this.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Give the GPU panel programmatic keyboard focus (<see cref="ISurface.FocusSurface"/>, R8).</summary>
+    public void FocusSurface() => Panel.Focus(FocusState.Programmatic);
+
+    /// <summary>
     /// Push the current surface geometry to the engine and, on the first valid size, spawn the
     /// shell. The engine is authoritative for cols/rows (plan §6 decision): we pass physical
     /// pixels + DPI and 0/0 for cols/rows, and it derives the grid from its own cell metrics.
     /// </summary>
     private void Configure()
     {
-        if (!_attached || _engine is null)
+        if (!_lifecycle.IsAttached || _engine is null)
         {
             return;
         }
@@ -138,7 +175,8 @@ public sealed partial class TerminalPane : UserControl
 
             if (!_started)
             {
-                _engine.SpawnShell(string.Empty); // default shell: pwsh → powershell → cmd
+                // Empty cmdline → engine's default shell (pwsh → powershell → cmd); cwd null → inherit.
+                _engine.SpawnShell(_cmdline ?? string.Empty, _cwd);
                 _started = true; // only after a successful spawn, so a failure retries next call
                 Panel.Focus(FocusState.Programmatic);
             }

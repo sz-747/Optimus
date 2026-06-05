@@ -3,10 +3,10 @@
     x:Class="Cmux.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="using:Cmux.Controls">
+    xmlns:splits="using:Cmux.Splits">
 
-    <!-- Phase 1: a single terminal pane fills the window. -->
+    <!-- Phase 2: a split-tree workspace of tabbed terminal panes fills the window. -->
     <Grid x:Name="Root" Background="#0C0C0C">
-        <controls:TerminalPane x:Name="Pane" />
+        <splits:WorkspaceView x:Name="Workspace" />
     </Grid>
 </Window>
