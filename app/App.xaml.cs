@@ -14,6 +14,7 @@ public partial class App : Application
 {
     private Window? _window;
     private PipeServer? _pipeServer;
+    private SocketControlMode _socketControlMode = SocketControlMode.CmuxOnly;
 
     public App()
     {
@@ -67,7 +68,12 @@ public partial class App : Application
 
         try
         {
-            _pipeServer = new PipeServer(HandleSocketLineAsync);
+            _socketControlMode = SocketAccess.ParseMode(Environment.GetEnvironmentVariable(SocketAccess.ControlModeEnvironmentVariable));
+            string currentSid = PeerIdentity.GetCurrentUserSid() ?? string.Empty;
+            _pipeServer = new PipeServer(
+                HandleSocketLineAsync,
+                controlMode: _socketControlMode,
+                clientSidValidator: sid => string.Equals(sid, currentSid, StringComparison.Ordinal));
             _pipeServer.Start();
         }
         catch (Exception ex)

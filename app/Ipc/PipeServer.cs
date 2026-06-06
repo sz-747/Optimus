@@ -25,6 +25,8 @@ internal sealed class PipeServer
     private readonly Func<string, StreamWriter, CancellationToken, Task>? _eventsStream;
     private readonly string _pipeName;
     private readonly int _maxServerInstances;
+    private readonly SocketControlMode _controlMode;
+    private readonly Func<string?, bool> _isClientSidAllowed;
     private readonly SemaphoreSlim _clientSlots;
     private readonly PipeSecurity _pipeSecurity;
     private readonly CancellationTokenSource _stopping = new();
@@ -35,15 +37,19 @@ internal sealed class PipeServer
     public PipeServer(
         Func<string, CancellationToken, Task<string?>> dispatch,
         Func<string, StreamWriter, CancellationToken, Task>? eventsStream = null,
+        SocketControlMode controlMode = SocketControlMode.CmuxOnly,
         string? pipeName = null,
-        int maxConcurrentClients = MaxConcurrentClients)
+        int maxConcurrentClients = MaxConcurrentClients,
+        Func<string?, bool>? clientSidValidator = null)
     {
         _dispatch = dispatch ?? throw new ArgumentNullException(nameof(dispatch));
         _eventsStream = eventsStream;
+        _controlMode = controlMode;
         _pipeName = ResolvePipeName(pipeName);
         _maxServerInstances = Math.Max(1, maxConcurrentClients);
         _clientSlots = new SemaphoreSlim(Math.Max(1, maxConcurrentClients));
         _pipeSecurity = BuildPipeSecurity();
+        _isClientSidAllowed = clientSidValidator ?? (_ => true);
     }
 
     public bool IsRunning
@@ -138,6 +144,13 @@ internal sealed class PipeServer
     {
         try
         {
+            if (!IsClientAuthorized(server))
+            {
+                await using StreamWriter unauthorized = new(server, Encoding.UTF8, bufferSize: 4096, leaveOpen: true) { AutoFlush = true };
+                await WriteResponseAsync(unauthorized, SocketWireProtocol.SerializeV1Response("ERROR: access denied"));
+                return;
+            }
+
             using StreamReader reader = new(server, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
             using StreamWriter writer = new(server, Encoding.UTF8, bufferSize: 4096, leaveOpen: true) { AutoFlush = true };
 
@@ -186,6 +199,17 @@ internal sealed class PipeServer
             _clientSlots.Release();
             server.Dispose();
         }
+    }
+
+    private bool IsClientAuthorized(NamedPipeServerStream server)
+    {
+        if (!SocketAccess.RequiresPeerSidCheck(_controlMode))
+        {
+            return true;
+        }
+
+        string? peerSid = PeerIdentity.ResolveClientSid(server);
+        return _isClientSidAllowed(peerSid);
     }
 
     private bool IsEventsStreamRequest(string request)
