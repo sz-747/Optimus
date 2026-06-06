@@ -36,9 +36,18 @@ internal sealed class PaneView : UserControl
     private static readonly SolidColorBrush FocusedBorder = new(Color.FromArgb(0xFF, 0x2D, 0xD4, 0xBF));
     private static readonly SolidColorBrush UnfocusedBorder = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
 
+    // Notification pane-flash (plan Phase 3 U7): briefly paint the pane border blue when a
+    // notification lands on it, then revert to the focus-state border. Colour-only on the existing
+    // constant-thickness border slot, so it never reflows the pane (mirrors the focus-outline model).
+    private static readonly SolidColorBrush FlashBorder = new(Color.FromArgb(0xFF, 0x4D, 0x9C, 0xF0));
+    private static readonly TimeSpan FlashDuration = TimeSpan.FromMilliseconds(700);
+
     private readonly PaneId _paneId;
     private readonly SplitTreeController _controller;
     private readonly SurfaceManager _surfaces;
+    private readonly Func<SurfaceId, bool> _isUnread;
+
+    private DispatcherTimer? _flashTimer;
 
     private readonly PaneTabStrip _strip = new();
     private readonly Grid _contentHost = new() { Background = ContentBackground };
@@ -53,11 +62,12 @@ internal sealed class PaneView : UserControl
     /// <summary>The model pane this view renders.</summary>
     public PaneId PaneId => _paneId;
 
-    public PaneView(PaneId paneId, SplitTreeController controller, SurfaceManager surfaces)
+    public PaneView(PaneId paneId, SplitTreeController controller, SurfaceManager surfaces, Func<SurfaceId, bool> isUnread)
     {
         _paneId = paneId;
         _controller = controller;
         _surfaces = surfaces;
+        _isUnread = isUnread;
 
         _strip.TabSelected += id => _controller.SelectTab(_paneId, id);
         _strip.TabClosed += id => _controller.CloseTab(id);
@@ -203,6 +213,48 @@ internal sealed class PaneView : UserControl
             return;
         }
         _strip.Render(TabHeaderProjection.Project(
-            tabs, sel, id => _titles.TryGetValue(id, out string? title) ? title : null));
+            tabs, sel,
+            id => _titles.TryGetValue(id, out string? title) ? title : null,
+            _isUnread));
     }
+
+    /// <summary>
+    /// Re-project this pane's tab headers from current controller state (plan Phase 3 U7). The host
+    /// calls this when unread state changes without a snapshot change — a notification arriving or
+    /// being cleared on focus — so the unread dot appears/disappears immediately.
+    /// </summary>
+    public void RefreshHeaders() => RenderStrip(_controller.Tabs(_paneId), _controller.SelectedTab(_paneId));
+
+    /// <summary>
+    /// Briefly flash this pane's border to signal a notification landed on it (plan Phase 3 U7).
+    /// Reverts to the current focus-state border after <see cref="FlashDuration"/>.
+    /// </summary>
+    public void Flash()
+    {
+        _root.BorderBrush = FlashBorder;
+        _flashTimer ??= CreateFlashTimer();
+        _flashTimer.Stop();
+        _flashTimer.Start();
+    }
+
+    /// <summary>Cancel any in-progress flash and restore the focus-state border immediately (AE6).</summary>
+    public void ClearFlash()
+    {
+        _flashTimer?.Stop();
+        RestoreBorder();
+    }
+
+    private DispatcherTimer CreateFlashTimer()
+    {
+        var timer = new DispatcherTimer { Interval = FlashDuration };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            RestoreBorder();
+        };
+        return timer;
+    }
+
+    private void RestoreBorder() =>
+        _root.BorderBrush = _controller.FocusedPane == _paneId ? FocusedBorder : UnfocusedBorder;
 }

@@ -51,6 +51,14 @@ public sealed partial class TerminalPane : UserControl, ISurface
     /// <summary>Raised (on the UI thread) when the shell sets the window/tab title (OSC 0/2).</summary>
     public event Action<string>? TitleChanged;
 
+    /// <summary>
+    /// Raised (on the UI thread) when a program in this surface fires a notification escape
+    /// sequence (OSC 9 / 777 / 99). The engine already delivers these as a TOAST host event;
+    /// this surfaces it as a typed <see cref="SurfaceNotification"/> for the notification
+    /// coordinator (Phase 3 U2, KTD1).
+    /// </summary>
+    public event Action<SurfaceNotification>? NotificationRaised;
+
     /// <summary>Raised (on the UI thread) when the shell process exits, with its exit code.</summary>
     public event Action<long>? ChildExited;
 
@@ -473,6 +481,12 @@ public sealed partial class TerminalPane : UserControl, ISurface
         {
             case HostEventKind.Title when e.Title is not null:
                 TitleChanged?.Invoke(e.Title);
+                break;
+            case HostEventKind.Toast:
+                // OSC 9 / 777 / 99 all arrive here (Phase 3 KTD1). Already on the UI thread
+                // (EngineHandle marshalled the borrowed UTF-8 into owned strings first). Empty
+                // title/body is valid — downstream falls back to the tab title.
+                NotificationRaised?.Invoke(new SurfaceNotification(e.Title ?? "", e.Body ?? ""));
                 break;
             case HostEventKind.ChildExit:
                 ChildExited?.Invoke(e.Arg0);

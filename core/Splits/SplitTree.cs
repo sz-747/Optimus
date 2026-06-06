@@ -62,7 +62,18 @@ public sealed record SplitBranch(
 /// controller mutations. <see cref="Root"/> is <c>null</c> when the tree is empty (the host re-seeds
 /// — see <see cref="SplitTreeController.Emptied"/>).
 /// </summary>
-public sealed record TreeSnapshot(SplitNode? Root, PaneId FocusedPane, PaneId? ZoomedPane, int Version);
+public sealed record TreeSnapshot(SplitNode? Root, PaneId FocusedPane, PaneId? ZoomedPane, int Version)
+{
+    /// <summary>
+    /// The focused pane's selected surface, or <c>null</c> when the focused pane is absent from this
+    /// snapshot (e.g. an empty tree). The snapshot stores <see cref="FocusedPane"/> but not the
+    /// focused surface — that is an instance property on <c>SplitTreeController</c> — so this helper
+    /// centralizes the identical derivation the Phase 3 notification coordinator and the
+    /// WorkspaceView focus-change path both need (KTD6). Mirrors
+    /// <c>SplitTreeController.FocusedSurface</c> exactly.
+    /// </summary>
+    public SurfaceId? FocusedSurface => Root.FindPane(FocusedPane)?.Selected;
+}
 
 /// <summary>Pure read-only queries over a node tree, shared by the controller and the view.</summary>
 public static class SplitNodeExtensions

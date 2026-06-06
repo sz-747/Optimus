@@ -15,6 +15,7 @@ public sealed partial class MainWindow : Window
         this.Title = "cmux";
 
         Workspace.ActiveTitleChanged += OnTitleChanged;
+        this.Activated += OnActivated;
         this.Closed += OnClosed;
     }
 
@@ -22,6 +23,13 @@ public sealed partial class MainWindow : Window
     {
         // Raised on the UI thread when the focused surface's title (or the focus) changes.
         this.Title = string.IsNullOrEmpty(title) ? "cmux" : title;
+    }
+
+    private void OnActivated(object sender, WindowActivatedEventArgs args)
+    {
+        // A UserControl cannot read its window's activation, so push it down to the workspace (feeds
+        // the notification suppression rule R4). Deactivated == app is no longer foreground.
+        Workspace.AppFocused = args.WindowActivationState != WindowActivationState.Deactivated;
     }
 
     private void OnClosed(object sender, WindowEventArgs args)

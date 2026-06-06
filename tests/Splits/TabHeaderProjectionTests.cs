@@ -70,4 +70,40 @@ public sealed class TabHeaderProjectionTests
 
         Assert.True(headers.IsEmpty);
     }
+
+    [Fact] // Phase 3 U7: Unread is set on exactly the surfaces the lookup reports unread. Covers R2.
+    public void Project_marks_unread_only_for_surfaces_the_lookup_reports()
+    {
+        var tabs = new List<SurfaceId> { S(1), S(2), S(3) };
+        var unread = new HashSet<SurfaceId> { S(2) };
+
+        ImmutableArray<TabHeaderDto> headers =
+            TabHeaderProjection.Project(tabs, S(1), titleOf: null, isUnread: unread.Contains);
+
+        Assert.False(headers[0].Unread);
+        Assert.True(headers[1].Unread);
+        Assert.False(headers[2].Unread);
+    }
+
+    [Fact] // Selected and unread are independent flags on the same tab.
+    public void Project_sets_selected_and_unread_independently()
+    {
+        var tabs = new List<SurfaceId> { S(5) };
+
+        ImmutableArray<TabHeaderDto> headers =
+            TabHeaderProjection.Project(tabs, S(5), titleOf: null, isUnread: _ => true);
+
+        Assert.True(headers[0].IsSelected);
+        Assert.True(headers[0].Unread);
+    }
+
+    [Fact] // No lookup -> nothing is unread (back-compat with Phase 2 callers).
+    public void Project_without_unread_lookup_marks_nothing_unread()
+    {
+        var tabs = new List<SurfaceId> { S(1), S(2) };
+
+        ImmutableArray<TabHeaderDto> headers = TabHeaderProjection.Project(tabs, S(1));
+
+        Assert.All(headers, h => Assert.False(h.Unread));
+    }
 }

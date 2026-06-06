@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 
 namespace Cmux.Splits;
@@ -26,6 +27,13 @@ internal sealed class PaneTabStrip : Grid
     private static readonly SolidColorBrush Transparent = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
     private static readonly SolidColorBrush ActiveText = new(Color.FromArgb(0xFF, 0xE6, 0xE6, 0xE6));
     private static readonly SolidColorBrush MutedText = new(Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A));
+
+    // Unread-notification dot (plan Phase 3 U7): a small blue marker in a fixed leading slot, kept
+    // distinct from the teal focus border so "unread" never reads as "focused". The slot is always
+    // reserved (constant width) so toggling unread never shifts the title text.
+    private const double UnreadSlotWidth = 14.0;
+    private const double UnreadDotSize = 7.0;
+    private static readonly SolidColorBrush UnreadDot = new(Color.FromArgb(0xFF, 0x4D, 0x9C, 0xF0));
 
     private readonly StackPanel _tabs;
     private readonly Button _zoomButton;
@@ -120,13 +128,30 @@ internal sealed class PaneTabStrip : Grid
         var chip = new Grid
         {
             Background = header.IsSelected ? SelectedChip : Transparent,
-            Padding = new Thickness(10, 0, 2, 0),
+            Padding = new Thickness(4, 0, 2, 0),
             MinWidth = 90,
             MaxWidth = 220,
             VerticalAlignment = VerticalAlignment.Stretch,
         };
+        chip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(UnreadSlotWidth) });
         chip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         chip.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // Unread dot in the reserved leading slot (only painted when unread; the slot is always present
+        // so read/unread tabs keep their titles aligned).
+        if (header.Unread)
+        {
+            var dot = new Ellipse
+            {
+                Width = UnreadDotSize,
+                Height = UnreadDotSize,
+                Fill = UnreadDot,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(dot, 0);
+            chip.Children.Add(dot);
+        }
 
         var title = new TextBlock
         {
@@ -136,14 +161,14 @@ internal sealed class PaneTabStrip : Grid
             TextTrimming = TextTrimming.CharacterEllipsis,
             FontSize = 12,
         };
-        Grid.SetColumn(title, 0);
+        Grid.SetColumn(title, 1);
         chip.Children.Add(title);
 
         Button close = MakeFlatButton("✕", "Close tab"); // ✕
         // Close before select: even if the chip's Tapped also fires, SelectTab on a now-removed
         // surface is a controller no-op, so ordering is harmless.
         close.Click += (_, _) => TabClosed?.Invoke(header.Id);
-        Grid.SetColumn(close, 1);
+        Grid.SetColumn(close, 2);
         chip.Children.Add(close);
 
         chip.Tapped += (_, e) =>

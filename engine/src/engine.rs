@@ -18,7 +18,7 @@ use wezterm_term::{Terminal, TerminalSize};
 use crate::ffi::events::{event_kind, EngineOptions, EventSink};
 use crate::pty::{default_shell, ConPty};
 use crate::render::terminal::{SelectionSpan, TerminalRenderer};
-use crate::vt::{build_terminal, SharedSink};
+use crate::vt::{build_terminal, Osc99Sniffer, SharedSink};
 
 /// Messages posted to the render thread. Variants carrying a `SyncSender` are synchronous:
 /// the FFI caller blocks until the render thread replies (attach/resize/selection are rare and
@@ -293,6 +293,10 @@ struct RenderState {
     selection: Option<Selection>,
 
     needs_present: bool,
+
+    /// OSC-99 (Kitty notification) scanner (plan §8 U1). Observes the same PTY bytes as
+    /// `Terminal::advance_bytes`; held here so a sequence split across read bursts reassembles.
+    osc99: Osc99Sniffer,
 }
 
 /// A drag-selection. Endpoints are `(stable_row, column)`; `stable_row` is wezterm's
@@ -346,6 +350,7 @@ fn render_loop(
         scroll_offset: 0,
         selection: None,
         needs_present: false,
+        osc99: Osc99Sniffer::new(),
     };
 
     while let Ok(cmd) = rx.recv() {
@@ -489,6 +494,18 @@ impl RenderState {
                     // Snap the viewport to the live bottom on fresh output.
                     self.scroll_offset = 0;
                     self.needs_present = true;
+                }
+                // OSC 99 (Kitty notifications): wezterm-term doesn't parse them, so sniff the same
+                // bytes and surface through the existing TOAST path (plan §8 U1, KTD2).
+                let toasts = self.osc99.feed(&buf);
+                if !toasts.is_empty() {
+                    if let Ok(guard) = self.sink.lock() {
+                        if let Some(sink) = guard.as_ref() {
+                            for t in &toasts {
+                                sink.emit_text(event_kind::TOAST, &t.title, &t.body, 0);
+                            }
+                        }
+                    }
                 }
             }
             RenderCmd::PtyEof => {

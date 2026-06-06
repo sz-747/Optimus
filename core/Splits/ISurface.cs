@@ -20,6 +20,15 @@ public interface ISurface
     event Action<string>? TitleChanged;
 
     /// <summary>
+    /// Raised (on the UI thread) when a program in this surface fires a notification escape
+    /// sequence — OSC 9 / 777 (parsed by the engine) or OSC 99 / Kitty (Phase 3 U1). All three
+    /// arrive as the same engine TOAST host event and surface here as one payload (Phase 3 U2,
+    /// KTD1). The owning <c>WorkspaceView</c> feeds it to the notification coordinator; like
+    /// <see cref="TitleChanged"/> it is a plain event, never a bound observable (KTD3).
+    /// </summary>
+    event Action<SurfaceNotification>? NotificationRaised;
+
+    /// <summary>
     /// Composite this surface (<c>true</c>) or collapse it out of the composition tree
     /// (<c>false</c>) so inactive surfaces cost no composition (R3/R11).
     /// </summary>

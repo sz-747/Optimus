@@ -27,8 +27,10 @@ public sealed class SurfaceManagerTests
         public int ShutdownCount { get; private set; }
 
         public event Action<string>? TitleChanged;
+        public event Action<SurfaceNotification>? NotificationRaised;
 
         public void RaiseTitle(string title) => TitleChanged?.Invoke(title);
+        public void RaiseNotification(SurfaceNotification n) => NotificationRaised?.Invoke(n);
 
         public void SetActive(bool active) => _log.Add($"active:{Id}:{active}");
         public void FocusSurface() => _log.Add($"focus:{Id}");
