@@ -14,6 +14,8 @@ public static class SocketMethods
     public const string SendKey = "send-key";
     public const string Notify = "notify";
     public const string NotifyTarget = "notify_target_async";
+    public const string CreateNotification = "notification.create";
+    public const string CreateNotificationForCaller = "notification.create_for_caller";
     public const string ListNotifications = "notification.list";
     public const string DismissNotification = "notification.dismiss";
     public const string DismissNotificationForSurface = "notification.dismiss_surface";

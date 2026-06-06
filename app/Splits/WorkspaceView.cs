@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using Cmux.Controls;
 using Cmux.Core;
 using Microsoft.UI.Xaml.Controls;
 
@@ -91,6 +93,97 @@ public sealed class WorkspaceView : UserControl
             CreateSurfaceEngine(id);
         }
         OnSnapshotChanged(_controller.Snapshot());
+    }
+
+    public TreeSnapshot Tree() => _controller.Snapshot();
+
+    public void FocusSurface(SurfaceId surface) => FocusSurfaceById(surface);
+
+    public void SendText(SurfaceId surface, string text)
+    {
+        if (_surfaces.Get(surface) is TerminalPane pane)
+        {
+            pane.SendText(text);
+        }
+    }
+
+    public void SendKey(SurfaceId surface, uint virtualKey, uint modifiers)
+    {
+        if (_surfaces.Get(surface) is TerminalPane pane)
+        {
+            pane.SendKey(virtualKey, modifiers);
+        }
+    }
+
+    public void CreateNotificationForTarget(string workspaceId, SurfaceId surface, string title, string subtitle, string body)
+    {
+        _ = workspaceId;
+        _coordinator.OnNotification(surface, new SurfaceNotification(title, subtitle, body), coalesce: false);
+        ScheduleDrain();
+    }
+
+    public void CreateNotification(string title, string subtitle, string body)
+    {
+        if (_controller.FocusedSurface is not SurfaceId focused)
+        {
+            return;
+        }
+
+        _coordinator.OnNotification(focused, new SurfaceNotification(title, subtitle, body), coalesce: false);
+        ScheduleDrain();
+    }
+
+    public void CreateNotificationForCaller(string? preferredSurfaceId, string title, string subtitle, string body)
+    {
+        if (!TryResolveNotificationSurface(preferredSurfaceId, out SurfaceId surface))
+        {
+            return;
+        }
+
+        _coordinator.OnNotification(surface, new SurfaceNotification(title, subtitle, body), coalesce: false);
+        ScheduleDrain();
+    }
+
+    public IReadOnlyList<TerminalNotification> NotificationList() => _coordinator.ListNotifications();
+
+    public void NotificationDismiss(Guid notificationId) => _coordinator.DismissNotification(notificationId);
+
+    public void NotificationDismissForSurface(SurfaceId surface) => _coordinator.DismissNotificationForSurface(surface);
+
+    public void NotificationDismissAllRead() => _coordinator.DismissAllRead();
+
+    public void NotificationClear() => _coordinator.ClearNotifications();
+
+    public void NotificationMarkRead(Guid notificationId) => _coordinator.MarkRead(notificationId);
+
+    public void NotificationMarkRead(SurfaceId surface) => _coordinator.MarkRead(surface);
+
+    public void NotificationMarkAllRead() => _coordinator.MarkAllRead();
+
+    public bool NotificationOpen(Guid notificationId)
+    {
+        foreach (TerminalNotification n in _coordinator.ListNotifications())
+        {
+            if (n.Id == notificationId)
+            {
+                FocusSurfaceById(n.SurfaceId);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public bool JumpToUnread()
+    {
+        (PaneId Pane, SurfaceId Surface)? target = _coordinator.JumpToUnreadTarget();
+        if (!target.HasValue)
+        {
+            return false;
+        }
+
+        _controller.FocusPane(target.Value.Pane);
+        _controller.SelectTab(target.Value.Pane, target.Value.Surface);
+        return true;
     }
 
     /// <summary>Tear down every surface engine in order (R9) and unregister the toast activator.
@@ -245,7 +338,7 @@ public sealed class WorkspaceView : UserControl
     /// which drives the snapshot focus-change path that marks the notification read and clears the
     /// pane flash. No-op if the surface has since closed.
     /// </summary>
-    private void FocusSurfaceById(SurfaceId id)
+    public void FocusSurfaceById(SurfaceId id)
     {
         TreeSnapshot snapshot = _controller.Snapshot();
         if (snapshot.Root.FindContaining(id) is PaneLeaf leaf)
@@ -253,6 +346,50 @@ public sealed class WorkspaceView : UserControl
             _controller.FocusPane(leaf.Id);
             _controller.SelectTab(leaf.Id, id);
         }
+    }
+
+    private bool TryResolveNotificationSurface(string? preferredSurfaceId, out SurfaceId surface)
+    {
+        if (TryParseSurfaceId(preferredSurfaceId, out surface))
+        {
+            return true;
+        }
+
+        if (_controller.FocusedSurface is SurfaceId focused)
+        {
+            surface = focused;
+            return true;
+        }
+
+        surface = default;
+        return false;
+    }
+
+    private static bool TryParseSurfaceId(string? value, out SurfaceId surface)
+    {
+        surface = default;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        ReadOnlySpan<char> text = value.AsSpan().Trim();
+        if (text.Length > 1 && char.ToUpperInvariant(text[0]) == 'S')
+        {
+            if (int.TryParse(text[1..], NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+            {
+                surface = new SurfaceId(parsed);
+                return true;
+            }
+        }
+
+        if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int raw))
+        {
+            surface = new SurfaceId(raw);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>Focus cleared a pane's unread state: stop its flash and drop the unread dot (AE6).</summary>

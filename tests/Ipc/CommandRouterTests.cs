@@ -53,6 +53,83 @@ public sealed class CommandRouterTests
         Assert.Equal("ready", effects.CreatedBody);
     }
 
+    [Fact] // Covers U6 create route.
+    public void Create_notification_dispatches_notification_target_handler()
+    {
+        FakeSocketEffects effects = new();
+
+        string response = CommandRouter.Dispatch(
+            "notification.create ws S1 title|subtitle|body",
+            effects,
+            AuthState.Unprotected);
+
+        Assert.Equal(SocketWireProtocol.SerializeV1Response("OK"), response);
+        Assert.Equal(new SurfaceId(1), effects.CreatedForSurface);
+        Assert.Equal("ws", effects.CreatedForWorkspace);
+        Assert.Equal("title", effects.CreatedTitle);
+        Assert.Equal("subtitle", effects.CreatedSubtitle);
+        Assert.Equal("body", effects.CreatedBody);
+    }
+
+    [Fact] // Covers U6 create_for_caller route.
+    public void Create_for_caller_notification_dispatches_caller_handler()
+    {
+        FakeSocketEffects effects = new();
+
+        string response = CommandRouter.Dispatch(
+            "notification.create_for_caller title|subtitle|body",
+            effects,
+            AuthState.Unprotected);
+
+        Assert.Equal(SocketWireProtocol.SerializeV1Response("OK"), response);
+        Assert.Equal("title", effects.CallerTitle);
+        Assert.Equal("subtitle", effects.CallerSubtitle);
+        Assert.Equal("body", effects.CallerBody);
+        Assert.Null(effects.CallerPreferredSurface);
+    }
+
+    [Fact] // Covers U6 mark_read surface.
+    public void Mark_read_dispatches_surface_handler()
+    {
+        FakeSocketEffects effects = new();
+
+        string response = CommandRouter.Dispatch(
+            "notification.mark_read S2",
+            effects,
+            AuthState.Unprotected);
+
+        Assert.Equal(SocketWireProtocol.SerializeV1Response("OK"), response);
+        Assert.Equal(new SurfaceId(2), effects.MarkReadSurface);
+    }
+
+    [Fact] // Covers U6 mark_read all scope.
+    public void Mark_read_dispatches_all_handler()
+    {
+        FakeSocketEffects effects = new();
+
+        string response = CommandRouter.Dispatch(
+            "notification.mark_read all",
+            effects,
+            AuthState.Unprotected);
+
+        Assert.Equal(SocketWireProtocol.SerializeV1Response("OK"), response);
+        Assert.True(effects.MarkAllRead);
+    }
+
+    [Fact] // Covers U6 dismiss all_read scope.
+    public void Dismiss_dispatches_all_read_handler()
+    {
+        FakeSocketEffects effects = new();
+
+        string response = CommandRouter.Dispatch(
+            "notification.dismiss all_read",
+            effects,
+            AuthState.Unprotected);
+
+        Assert.Equal(SocketWireProtocol.SerializeV1Response("OK"), response);
+        Assert.True(effects.DismissAllReadCalled);
+    }
+
     [Fact] // Covers U4 and V2 parser.
     public void Surface_send_text_dispatches_send_handler()
     {
@@ -103,6 +180,14 @@ public sealed class CommandRouterTests
         public string CreatedTitle = string.Empty;
         public string CreatedSubtitle = string.Empty;
         public string CreatedBody = string.Empty;
+        public string? CallerPreferredSurface;
+        public string CallerTitle = string.Empty;
+        public string CallerSubtitle = string.Empty;
+        public string CallerBody = string.Empty;
+        public SurfaceId MarkReadSurface;
+        public Guid MarkReadNotificationId;
+        public bool MarkAllRead;
+        public bool DismissAllReadCalled;
 
         public SurfaceId SentSurface;
         public string SentText = string.Empty;
@@ -128,11 +213,29 @@ public sealed class CommandRouterTests
             CreatedBody = body;
         }
 
+        public void CreateNotification(string title, string subtitle, string body)
+        {
+            CallerTitle = title;
+            CallerSubtitle = subtitle;
+            CallerBody = body;
+        }
+
+        public void CreateNotificationForCaller(string? preferredSurfaceId, string title, string subtitle, string body)
+        {
+            CallerPreferredSurface = preferredSurfaceId;
+            CallerTitle = title;
+            CallerSubtitle = subtitle;
+            CallerBody = body;
+        }
+
         public IReadOnlyList<TerminalNotification> NotificationList() => [];
         public void NotificationDismiss(Guid notificationId) {}
+        public void NotificationDismissAllRead() => DismissAllReadCalled = true;
         public void NotificationDismissForSurface(SurfaceId surface) {}
         public void NotificationClear() {}
         public void NotificationMarkRead(Guid notificationId) {}
+        public void NotificationMarkRead(SurfaceId surface) => MarkReadSurface = surface;
+        public void NotificationMarkAllRead() => MarkAllRead = true;
         public void NotificationOpen(Guid notificationId) {}
         public bool JumpToUnread() => true;
         public void SetStatus(string status) {}

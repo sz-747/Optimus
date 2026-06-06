@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Cmux.Ipc;
+using Cmux.Core;
 
 namespace Cmux;
 
@@ -15,6 +17,9 @@ public partial class App : Application
     private Window? _window;
     private PipeServer? _pipeServer;
     private SocketControlMode _socketControlMode = SocketControlMode.CmuxOnly;
+    private PipeServerEffects? _pipeServerEffects;
+    private readonly PasswordStore _passwordStore = new();
+    private bool _socketAuthenticated;
 
     public App()
     {
@@ -70,6 +75,12 @@ public partial class App : Application
         {
             _socketControlMode = SocketAccess.ParseMode(Environment.GetEnvironmentVariable(SocketAccess.ControlModeEnvironmentVariable));
             string currentSid = PeerIdentity.GetCurrentUserSid() ?? string.Empty;
+            if (_window is not MainWindow mainWindow)
+            {
+                return;
+            }
+
+            _pipeServerEffects = new PipeServerEffects(mainWindow.WorkspaceView, Authenticate);
             _pipeServer = new PipeServer(
                 HandleSocketLineAsync,
                 controlMode: _socketControlMode,
@@ -87,11 +98,32 @@ public partial class App : Application
         _pipeServer?.Stop();
     }
 
-    private static Task<string?> HandleSocketLineAsync(string request, CancellationToken cancellationToken)
+    private Task<string?> HandleSocketLineAsync(string request, CancellationToken cancellationToken)
     {
-        _ = request;
         _ = cancellationToken;
+        if (_pipeServerEffects is null)
+        {
+            return Task.FromResult<string?>(SocketWireProtocol.SerializeV1Response("ERROR: socket not ready"));
+        }
 
-        return Task.FromResult<string?>(SocketWireProtocol.SerializeV1Response("ERROR: socket router not wired yet"));
+        AuthState authState = _socketControlMode == SocketControlMode.Password
+            ? new AuthState(RequiresAuthentication: true, IsAuthenticated: _socketAuthenticated)
+            : AuthState.Unprotected;
+
+        return Task.FromResult(CommandRouter.Dispatch(request, _pipeServerEffects, authState));
+    }
+
+    private bool Authenticate(string credential)
+    {
+        bool ok = _socketControlMode == SocketControlMode.Password
+            ? _passwordStore.Verify(credential)
+            : true;
+
+        if (ok)
+        {
+            _socketAuthenticated = true;
+        }
+
+        return ok;
     }
 }

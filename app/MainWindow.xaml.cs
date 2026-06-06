@@ -9,6 +9,8 @@ namespace Cmux;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
+    public Splits.WorkspaceView WorkspaceView => Workspace;
+
     public MainWindow()
     {
         this.InitializeComponent();

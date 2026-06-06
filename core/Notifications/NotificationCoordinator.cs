@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Cmux.Core;
 
@@ -68,7 +69,60 @@ public sealed class NotificationCoordinator
     /// tree/focus state (that is re-derived at <see cref="Drain"/> time), so it is safe to call from
     /// the host-event path before any snapshot is captured. Bursts coalesce per surface (R5/AE4).
     /// </summary>
-    public void OnNotification(SurfaceId surface, SurfaceNotification payload) => _queue.Enqueue(surface, payload);
+    public void OnNotification(SurfaceId surface, SurfaceNotification payload, bool coalesce = true) =>
+        _queue.Enqueue(surface, payload, coalesce);
+
+    /// <summary>Return unread notifications from newest to oldest as a direct UI payload.</summary>
+    public IReadOnlyList<TerminalNotification> ListNotifications() => _store.Items;
+
+    /// <summary>Mutations requested by socket actions.</summary>
+    public bool JumpToUnreadTarget(out PaneId pane, out SurfaceId surface)
+    {
+        foreach (TerminalNotification entry in _store.Items)
+        {
+            if (!entry.IsRead)
+            {
+                pane = entry.PaneId;
+                surface = entry.SurfaceId;
+                return true;
+            }
+        }
+
+        pane = default;
+        surface = default;
+        return false;
+    }
+
+    public (PaneId Pane, SurfaceId Surface)? JumpToUnreadTarget()
+    {
+        if (JumpToUnreadTarget(out PaneId pane, out SurfaceId surface))
+        {
+            return (pane, surface);
+        }
+        return null;
+    }
+
+    public void MarkRead(Guid notificationId) => _store.MarkRead(notificationId);
+    public void MarkRead(SurfaceId surface) => _store.MarkRead(surface);
+    public void MarkAllRead()
+    {
+        foreach (Guid id in _store.Items.Where(n => !n.IsRead).Select(n => n.Id).ToArray())
+        {
+            _store.MarkRead(id);
+        }
+    }
+
+    public void DismissNotification(Guid id) => _store.Remove(id);
+    public void DismissNotificationForSurface(SurfaceId surface) => _store.ClearForSurface(surface);
+    public void DismissAllRead()
+    {
+        foreach (Guid id in _store.Items.Where(n => n.IsRead).Select(n => n.Id).ToArray())
+        {
+            _store.Remove(id);
+        }
+    }
+
+    public void ClearNotifications() => _store.ClearAll();
 
     /// <summary>
     /// Deliver the pending queue against <paramref name="snapshot"/>. Orphaned entries (surface no
@@ -107,6 +161,7 @@ public sealed class NotificationCoordinator
             entry.Surface,
             leaf.Id,
             entry.Payload.Title,
+            entry.Payload.Subtitle,
             entry.Payload.Body,
             paneFlash: effects.PaneFlash,
             isRead: !effects.MarkUnread);

@@ -26,20 +26,20 @@ public sealed class PasswordStore
     private const string PasswordFileName = "cmux-socket-password.bin";
 
     private readonly ISecretProtector _secretProtector;
-    private readonly Func<string?> _getEnv;
+    private readonly Func<string, string?> _getEnv;
     private readonly Func<string> _getLocalAppData;
     private readonly Func<string, bool> _fileExists;
     private readonly Func<string, byte[]> _readFile;
 
     public PasswordStore(
         ISecretProtector? secretProtector = null,
-        Func<string?>? getEnv = null,
+        Func<string, string?>? getEnv = null,
         Func<string>? getLocalAppData = null,
         Func<string, bool>? fileExists = null,
         Func<string, byte[]>? readFile = null)
     {
         _secretProtector = secretProtector ?? new NoopSecretProtector();
-        _getEnv = getEnv ?? (name => Environment.GetEnvironmentVariable(name));
+        _getEnv = getEnv ?? Environment.GetEnvironmentVariable;
         _getLocalAppData = getLocalAppData ?? (() => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
         _fileExists = fileExists ?? File.Exists;
         _readFile = readFile ?? File.ReadAllBytes;

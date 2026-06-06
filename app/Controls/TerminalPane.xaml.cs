@@ -159,6 +159,19 @@ public sealed partial class TerminalPane : UserControl, ISurface
     /// <summary>Give the GPU panel programmatic keyboard focus (<see cref="ISurface.FocusSurface"/>, R8).</summary>
     public void FocusSurface() => Panel.Focus(FocusState.Programmatic);
 
+    public void SendText(string text) => _engine?.SendText(text);
+
+    public void SendKey(uint virtualKey, uint modifiers)
+    {
+        if (_engine is null)
+        {
+            return;
+        }
+
+        _engine.SendKey(virtualKey, (KeyModifiers)modifiers, down: true);
+        _engine.SendKey(virtualKey, (KeyModifiers)modifiers, down: false);
+    }
+
     /// <summary>
     /// Push the current surface geometry to the engine and, on the first valid size, spawn the
     /// shell. The engine is authoritative for cols/rows (plan §6 decision): we pass physical
@@ -486,7 +499,7 @@ public sealed partial class TerminalPane : UserControl, ISurface
                 // OSC 9 / 777 / 99 all arrive here (Phase 3 KTD1). Already on the UI thread
                 // (EngineHandle marshalled the borrowed UTF-8 into owned strings first). Empty
                 // title/body is valid — downstream falls back to the tab title.
-                NotificationRaised?.Invoke(new SurfaceNotification(e.Title ?? "", e.Body ?? ""));
+                NotificationRaised?.Invoke(new SurfaceNotification(e.Title ?? "", string.Empty, e.Body ?? ""));
                 break;
             case HostEventKind.ChildExit:
                 ChildExited?.Invoke(e.Arg0);

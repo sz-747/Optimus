@@ -8,4 +8,4 @@ namespace Cmux.Core;
 /// added by the store (U3), not carried on the wire. Lives in <c>Cmux.Core</c> so the event contract
 /// is testable and fakes can raise it without a window.
 /// </summary>
-public readonly record struct SurfaceNotification(string Title, string Body);
+public readonly record struct SurfaceNotification(string Title, string Subtitle, string Body);

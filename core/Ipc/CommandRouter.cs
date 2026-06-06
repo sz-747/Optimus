@@ -66,6 +66,8 @@ public static class CommandRouter
             SocketMethods.SendKey => HandleSendKey(command.Args, effects),
             SocketMethods.Notify => HandleNotifyTarget(command.Args, effects),
             SocketMethods.NotifyTarget => HandleNotifyTarget(command.Args, effects),
+            SocketMethods.CreateNotification => HandleCreateNotification(command.Args, effects),
+            SocketMethods.CreateNotificationForCaller => HandleCreateForCaller(command.Args, effects),
             SocketMethods.ListNotifications => HandleListNotifications(effects.NotificationList()),
             SocketMethods.DismissNotification => HandleNotificationDismiss(command.Args, effects),
             SocketMethods.DismissNotificationForSurface => HandleNotificationDismissForSurface(command.Args, effects),
@@ -102,6 +104,7 @@ public static class CommandRouter
             SocketMethods.SystemPing => Ok(request, new { pong = true }),
             SocketMethods.SystemCapabilities => Ok(request, new { capabilities = effects.Capabilities() }),
             SocketMethods.V2Notify => HandleNotifyV2(request, effects),
+            SocketMethods.CreateNotificationForCaller => HandleCreateForCallerV2(request, effects),
             SocketMethods.EventsStreamV2 => null,
             SocketMethods.AuthLogin => HandleAuthLogin(request, effects),
             SocketMethods.SurfaceSendText => HandleSurfaceSendText(request, effects),
@@ -180,18 +183,57 @@ public static class CommandRouter
         return SocketWireProtocol.SerializeV1Response("OK");
     }
 
+    private static string? HandleCreateNotification(string args, ISocketEffects effects)
+    {
+        if (!TryParseWorkspaceSurfaceAndRemainder(args, out string? workspace, out SurfaceId surface, out string body))
+        {
+            return SocketWireProtocol.SerializeV1Response("ERROR: expected: notification.create <workspace> <surface> <title>|<subtitle>|<body>");
+        }
+
+        if (!TryParseNotificationBody(body, out string title, out string subtitle, out string message))
+        {
+            return SocketWireProtocol.SerializeV1Response("ERROR: expected: <title>|<subtitle>|<body>");
+        }
+
+        effects.CreateNotificationForTarget(workspace ?? string.Empty, surface, title, subtitle, message);
+        return SocketWireProtocol.SerializeV1Response("OK");
+    }
+
+    private static string? HandleCreateForCaller(string args, ISocketEffects effects)
+    {
+        if (!TryParseNotificationBody(args, out string title, out string subtitle, out string body))
+        {
+            return SocketWireProtocol.SerializeV1Response("ERROR: expected: notification.create_for_caller <title>|<subtitle>|<body>");
+        }
+
+        effects.CreateNotificationForCaller(preferredSurfaceId: null, title: title, subtitle: subtitle, body: body);
+        return SocketWireProtocol.SerializeV1Response("OK");
+    }
+
     private static string HandleListNotifications(IReadOnlyList<TerminalNotification> notifications) =>
         SocketWireProtocol.SerializeV1Response($"OK: {notifications.Count} notifications");
 
     private static string? HandleNotificationDismiss(string args, ISocketEffects effects)
     {
-        if (!TryParseGuid(args, out Guid id))
+        if (TryParseGuid(args, out Guid id))
         {
-            return SocketWireProtocol.SerializeV1Response("ERROR: expected notification id.");
+            effects.NotificationDismiss(id);
+            return SocketWireProtocol.SerializeV1Response("OK");
         }
 
-        effects.NotificationDismiss(id);
-        return SocketWireProtocol.SerializeV1Response("OK");
+        if (TryParseSurface(args, out SurfaceId surface))
+        {
+            effects.NotificationDismissForSurface(surface);
+            return SocketWireProtocol.SerializeV1Response("OK");
+        }
+
+        if (IsAllReadScope(args))
+        {
+            effects.NotificationDismissAllRead();
+            return SocketWireProtocol.SerializeV1Response("OK");
+        }
+
+        return SocketWireProtocol.SerializeV1Response("ERROR: expected notification id, surface id, or all_read.");
     }
 
     private static string? HandleNotificationDismissForSurface(string args, ISocketEffects effects)
@@ -215,7 +257,18 @@ public static class CommandRouter
     {
         if (!TryParseGuid(args, out Guid id))
         {
-            return SocketWireProtocol.SerializeV1Response("ERROR: expected notification id.");
+            if (!TryParseSurface(args, out SurfaceId surface))
+            {
+                if (!IsMarkAllScope(args))
+                {
+                    return SocketWireProtocol.SerializeV1Response("ERROR: expected notification id, surface id, or all.");
+                }
+                effects.NotificationMarkAllRead();
+                return SocketWireProtocol.SerializeV1Response("OK");
+            }
+
+            effects.NotificationMarkRead(surface);
+            return SocketWireProtocol.SerializeV1Response("OK");
         }
 
         effects.NotificationMarkRead(id);
@@ -343,6 +396,16 @@ public static class CommandRouter
         return Ok(request, new { ok = true });
     }
 
+    private static string? HandleCreateForCallerV2(V2Request request, ISocketEffects effects)
+    {
+        string title = TryGetStringParam(request.Params, "title", out string? t) ? t : string.Empty;
+        string subtitle = TryGetStringParam(request.Params, "subtitle", out string? s) ? s : string.Empty;
+        string body = TryGetStringParam(request.Params, "body", out string? b) ? b : string.Empty;
+        string preferredSurfaceId = TryGetStringParam(request.Params, "preferred_surface_id", out string? p) ? p : null;
+        effects.CreateNotificationForCaller(preferredSurfaceId, title, subtitle, body);
+        return Ok(request, new { ok = true });
+    }
+
     private static string? HandleAuthLogin(V2Request request, ISocketEffects effects)
     {
         string credential = TryGetStringParam(request.Params, "credential", out string? c) ? c
@@ -446,7 +509,20 @@ public static class CommandRouter
     {
         if (!TryGetGuidParam(request.Params, out Guid id))
         {
-            return ParseError(request, InvalidParamsCode, "Missing id.");
+            if (TryGetSurfaceFromParams(request.Params, out SurfaceId surface))
+            {
+                effects.NotificationDismissForSurface(surface);
+                return Ok(request, new { ok = true });
+            }
+
+            if (TryGetNotificationScopeParam(request.Params, out string scope)
+                && IsAllReadScope(scope))
+            {
+                effects.NotificationDismissAllRead();
+                return Ok(request, new { ok = true });
+            }
+
+            return ParseError(request, InvalidParamsCode, "Missing id, surface_id, or all_read.");
         }
         effects.NotificationDismiss(id);
         return Ok(request, new { ok = true });
@@ -467,7 +543,20 @@ public static class CommandRouter
     {
         if (!TryGetGuidParam(request.Params, out Guid id))
         {
-            return ParseError(request, InvalidParamsCode, "Missing id.");
+            if (TryGetSurfaceFromParams(request.Params, out SurfaceId surface))
+            {
+                effects.NotificationMarkRead(surface);
+                return Ok(request, new { ok = true });
+            }
+
+            if (TryGetNotificationScopeParam(request.Params, out string scope)
+                && IsMarkAllScope(scope))
+            {
+                effects.NotificationMarkAllRead();
+                return Ok(request, new { ok = true });
+            }
+
+            return ParseError(request, InvalidParamsCode, "Missing id, surface_id, or all.");
         }
         effects.NotificationMarkRead(id);
         return Ok(request, new { ok = true });
@@ -562,6 +651,41 @@ public static class CommandRouter
             pane_flash = n.PaneFlash,
         } as object)
         .ToList();
+
+    private static bool TryParseNotificationBody(string text, out string title, out string subtitle, out string body)
+    {
+        if (text is null)
+        {
+            title = string.Empty;
+            subtitle = string.Empty;
+            body = string.Empty;
+            return false;
+        }
+
+        string[] parts = text.Split('|', 3);
+        title = parts.Length > 0 ? parts[0] : string.Empty;
+        subtitle = parts.Length > 1 ? parts[1] : string.Empty;
+        body = parts.Length > 2 ? parts[2] : string.Empty;
+        return true;
+    }
+
+    private static bool IsMarkAllScope(string args) => IsAllScope(args);
+
+    private static bool IsAllReadScope(string args) => IsAllScope(args);
+
+    private static bool IsAllScope(string args)
+    {
+        string trimmed = args.Trim();
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        int firstSpace = trimmed.IndexOf(' ');
+        string scope = firstSpace < 0 ? trimmed : trimmed[..firstSpace];
+        return string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(scope, "all_read", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool TryParseSurfacePayload(string args, out SurfaceId surface, out string payload) =>
         TryParseWorkspaceSurfaceAndRemainder(args, out _, out surface, out payload);
@@ -783,6 +907,20 @@ public static class CommandRouter
             return Guid.TryParse(raw.GetString(), out value);
         }
         value = Guid.Empty;
+        return false;
+    }
+
+    private static bool TryGetNotificationScopeParam(JsonElement element, out string scope)
+    {
+        if (element.ValueKind == JsonValueKind.Object
+            && element.TryGetProperty("scope", out JsonElement scopeElement)
+            && scopeElement.ValueKind == JsonValueKind.String)
+        {
+            scope = scopeElement.GetString() ?? string.Empty;
+            return !string.IsNullOrWhiteSpace(scope);
+        }
+
+        scope = string.Empty;
         return false;
     }
 }
