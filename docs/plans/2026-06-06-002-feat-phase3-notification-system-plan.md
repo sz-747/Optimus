@@ -1,7 +1,7 @@
 ---
 title: "feat: Phase 3 — notification system"
 type: feat
-status: active
+status: completed
 date: 2026-06-06
 origin: docs/plans/2026-06-04-001-feature-cmux-windows-plan.md
 ---
