@@ -34,6 +34,11 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        if (Application.Current is App app)
+        {
+            app.StopPipeServer();
+        }
+
         Workspace.ShutdownAll();
     }
 }

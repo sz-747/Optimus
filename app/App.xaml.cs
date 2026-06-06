@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Threading;
 using Microsoft.UI.Xaml;
+using Cmux.Ipc;
 
 namespace Cmux;
 
@@ -11,6 +13,7 @@ namespace Cmux;
 public partial class App : Application
 {
     private Window? _window;
+    private PipeServer? _pipeServer;
 
     public App()
     {
@@ -51,5 +54,38 @@ public partial class App : Application
     {
         _window = new MainWindow();
         _window.Activate();
+
+        StartPipeServer();
+    }
+
+    private void StartPipeServer()
+    {
+        if (_pipeServer is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            _pipeServer = new PipeServer(HandleSocketLineAsync);
+            _pipeServer.Start();
+        }
+        catch (Exception ex)
+        {
+            App.LogError("App.StartPipeServer", ex);
+        }
+    }
+
+    internal void StopPipeServer()
+    {
+        _pipeServer?.Stop();
+    }
+
+    private static Task<string?> HandleSocketLineAsync(string request, CancellationToken cancellationToken)
+    {
+        _ = request;
+        _ = cancellationToken;
+
+        return Task.FromResult<string?>(SocketWireProtocol.SerializeV1Response("ERROR: socket router not wired yet"));
     }
 }
