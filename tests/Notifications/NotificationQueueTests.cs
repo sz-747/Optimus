@@ -12,7 +12,7 @@ namespace Cmux.Core.Tests;
 /// </summary>
 public sealed class NotificationQueueTests
 {
-    private static SurfaceNotification P(string title) => new(title, "");
+    private static SurfaceNotification P(string title) => new(title, "", "");
 
     [Fact] // Covers AE4.
     public void Coalesce_keeps_latest_for_same_surface()

@@ -10,11 +10,28 @@ public static class PipeName
     public const string SocketPathEnv = "CMUX_SOCKET_PATH";
     public const string SocketEnv = "CMUX_SOCKET";
 
+    private const string LocalPipePrefix = @"\\.\pipe\";
+
     public static string BuildPipeName(string variant, string? slug = null)
     {
         string normalizedVariant = NormalizeVariant(variant);
         string suffix = string.IsNullOrWhiteSpace(slug) ? string.Empty : $"-{slug}";
-        return $@"\\\\.\\pipe\\cmux-{normalizedVariant}{suffix}";
+        return $@"\\.\pipe\cmux-{normalizedVariant}{suffix}";
+    }
+
+    /// <summary>
+    /// Strips the Win32 <c>\\.\pipe\</c> prefix so the name can be handed to
+    /// <c>NamedPipeServerStream</c>/<c>NamedPipeClientStream</c>, which expect the bare
+    /// pipe name and prepend the prefix themselves.
+    /// </summary>
+    public static string ToLocalName(string pipePath)
+    {
+        if (pipePath.StartsWith(LocalPipePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return pipePath[LocalPipePrefix.Length..];
+        }
+
+        return pipePath;
     }
 
     public static string ResolveFromEnvironment(Func<string, string?> getEnv)

@@ -27,7 +27,7 @@ public sealed class NotificationCoordinatorTests
         return new TreeSnapshot(root, focused, zoomed, 1);
     }
 
-    private static SurfaceNotification P(string title) => new(title, "");
+    private static SurfaceNotification P(string title) => new(title, "", "");
 
     [Fact] // Covers R2, R3, AE1.
     public void Notification_on_unfocused_surface_records_unread_and_requests_flash_and_toast()

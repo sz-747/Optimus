@@ -254,7 +254,7 @@ internal sealed class PipeServer
     private NamedPipeServerStream CreateServerStream()
     {
         return NamedPipeServerStreamAcl.Create(
-            pipeName: _pipeName,
+            pipeName: PipeName.ToLocalName(_pipeName),
             direction: PipeDirection.InOut,
             maxNumberOfServerInstances: _maxServerInstances,
             transmissionMode: PipeTransmissionMode.Byte,

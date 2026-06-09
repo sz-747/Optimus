@@ -11,7 +11,7 @@ namespace Cmux.Core.Tests;
 /// </summary>
 public sealed class NotificationPolicyTests
 {
-    private static readonly SurfaceNotification Req = new("title", "body");
+    private static readonly SurfaceNotification Req = new("title", "", "body");
 
     [Fact] // Covers R7.
     public void Default_policy_enables_all_effects_when_not_in_front()
