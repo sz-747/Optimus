@@ -80,7 +80,7 @@ public partial class App : Application
                 return;
             }
 
-            _pipeServerEffects = new PipeServerEffects(mainWindow.WorkspaceView, Authenticate);
+            _pipeServerEffects = new PipeServerEffects(mainWindow.WorkspaceHost, Authenticate);
             _pipeServer = new PipeServer(
                 HandleSocketLineAsync,
                 controlMode: _socketControlMode,

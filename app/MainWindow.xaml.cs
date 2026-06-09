@@ -3,20 +3,21 @@ using Microsoft.UI.Xaml;
 namespace Cmux;
 
 /// <summary>
-/// The single Phase-2 window, hosting a <see cref="Splits.WorkspaceView"/> (a split tree of tabbed
-/// terminal panes). Forwards the focused surface's title to the window chrome and tears every engine
-/// down on close so render threads stop before their panels are disposed (plan §7.2 / R9).
+/// The single window, hosting a <see cref="Sidebar.WorkspaceHost"/> (the workspace sidebar beside
+/// the selected workspace's split tree — Phase 5). Forwards the focused surface's title to the
+/// window chrome and tears every engine down on close so render threads stop before their panels
+/// are disposed (plan §7.2 / R9).
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    public Splits.WorkspaceView WorkspaceView => Workspace;
+    public Sidebar.WorkspaceHost WorkspaceHost => Host;
 
     public MainWindow()
     {
         this.InitializeComponent();
         this.Title = "cmux";
 
-        Workspace.ActiveTitleChanged += OnTitleChanged;
+        Host.ActiveTitleChanged += OnTitleChanged;
         this.Activated += OnActivated;
         this.Closed += OnClosed;
     }
@@ -29,9 +30,9 @@ public sealed partial class MainWindow : Window
 
     private void OnActivated(object sender, WindowActivatedEventArgs args)
     {
-        // A UserControl cannot read its window's activation, so push it down to the workspace (feeds
+        // A UserControl cannot read its window's activation, so push it down to the host (feeds
         // the notification suppression rule R4). Deactivated == app is no longer foreground.
-        Workspace.AppFocused = args.WindowActivationState != WindowActivationState.Deactivated;
+        Host.AppFocused = args.WindowActivationState != WindowActivationState.Deactivated;
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
@@ -41,6 +42,6 @@ public sealed partial class MainWindow : Window
             app.StopPipeServer();
         }
 
-        Workspace.ShutdownAll();
+        Host.ShutdownAll();
     }
 }

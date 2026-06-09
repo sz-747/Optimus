@@ -9,12 +9,12 @@ using Microsoft.UI.Xaml.Controls;
 namespace Cmux.Splits;
 
 /// <summary>
-/// The single hosted workspace (plan Phase 2 U6): it owns the model plane (a
-/// <see cref="SplitTreeController"/>), the surface plane (a <see cref="SurfaceManager"/> over real
-/// <c>TerminalPane</c>s), the <see cref="SplitTreeView"/> that renders them, and the
-/// <see cref="ShortcutRouter"/> that drives them by keyboard. It seeds one pane + one surface on
-/// construction (preserving Phase-1 launch behavior) and is the sole place the two planes are wired
-/// together.
+/// One hosted workspace (plan Phase 2 U6, multi-workspace since Phase 5): it renders the model
+/// plane of a <see cref="Cmux.Core.Workspace"/> (whose <see cref="SplitTreeController"/> it drives),
+/// owns the surface plane (a <see cref="SurfaceManager"/> over real <c>TerminalPane</c>s), the
+/// <see cref="SplitTreeView"/> that renders them, and the <see cref="ShortcutRouter"/> that drives
+/// them by keyboard. The controller arrives pre-seeded with one pane + one surface (preserving
+/// Phase-1 launch behavior); this view is the sole place the two planes are wired together.
 ///
 /// <para><b>Event flow.</b> Controller operations raise <see cref="SplitTreeController.SurfaceCreated"/>/
 /// <see cref="SplitTreeController.SurfaceClosed"/> (→ create/dispose the matching engine) and then a
@@ -25,7 +25,7 @@ namespace Cmux.Splits;
 /// </summary>
 public sealed class WorkspaceView : UserControl
 {
-    private readonly SplitTreeController _controller = new();
+    private readonly SplitTreeController _controller;
     private readonly SurfaceManager _surfaces = new(new TerminalPaneSurfaceFactory());
     private readonly SplitTreeView _tree;
     private readonly ShortcutRouter _shortcuts;
@@ -40,7 +40,7 @@ public sealed class WorkspaceView : UserControl
     // not copied here, since these capture the coordinator).
     private readonly NotificationCoordinator _coordinator = new();
     private readonly Dictionary<SurfaceId, Action<SurfaceNotification>> _notifyHandlers = new();
-    private readonly ToastService _toasts;
+    private readonly ToastService? _toasts;
     private bool _appFocused = true;
     private bool _drainScheduled;
 
@@ -48,6 +48,12 @@ public sealed class WorkspaceView : UserControl
 
     /// <summary>Raised when the focused surface's title (or the focus itself) changes — drives the window chrome.</summary>
     public event Action<string>? ActiveTitleChanged;
+
+    /// <summary>
+    /// Raised after any notification-plane mutation (deliver, mark, dismiss, clear) so the sidebar
+    /// can recompute this workspace's unread badge and latest-text row (Phase 5).
+    /// </summary>
+    public event Action? NotificationsChanged;
 
     /// <summary>
     /// Whether the host window is currently the foreground window. A <see cref="UserControl"/> cannot
@@ -61,8 +67,27 @@ public sealed class WorkspaceView : UserControl
         set => _appFocused = value;
     }
 
-    public WorkspaceView()
+    /// <summary>The workspace model this view renders (Phase 5): metadata + the split controller.</summary>
+    public Workspace Model { get; }
+
+    /// <summary>Total unread notifications in this workspace (the sidebar badge source).</summary>
+    public int UnreadCount => _coordinator.Store.UnreadCount;
+
+    /// <summary>Newest recorded notification in this workspace, or null (the sidebar latest-text source).</summary>
+    public TerminalNotification? LatestNotification =>
+        _coordinator.Store.Items.Count > 0 ? _coordinator.Store.Items[0] : null;
+
+    /// <summary>
+    /// Build the view for <paramref name="model"/>. <paramref name="toasts"/> is the app's single
+    /// desktop-toast surface (the COM activator registers once per process, so the host owns it and
+    /// shares it across workspaces); null leaves only the in-app flash + badge (KTD8).
+    /// </summary>
+    public WorkspaceView(Workspace model, ToastService? toasts = null)
     {
+        Model = model ?? throw new ArgumentNullException(nameof(model));
+        _controller = model.Controller;
+        _toasts = toasts;
+
         _tree = new SplitTreeView(
             paneFactory: GetOrCreatePane,
             onDividerChanged: (branch, fraction) => _controller.SetDividerPosition(branch, fraction));
@@ -74,12 +99,6 @@ public sealed class WorkspaceView : UserControl
 
         _coordinator.Surfaced += OnSurfaced;
         _coordinator.FlashCleared += OnFlashCleared;
-
-        // Desktop-toast surface (U8): isolated and self-degrading — if registration fails the rest of
-        // the notification plane is unaffected. Clicking a toast focuses its surface (AE6).
-        _toasts = new ToastService(DispatcherQueue);
-        _toasts.Activated += FocusSurfaceById;
-        _toasts.Register();
 
         _shortcuts = new ShortcutRouter(_controller, _surfaces);
         _shortcuts.Attach(this);
@@ -146,19 +165,29 @@ public sealed class WorkspaceView : UserControl
 
     public IReadOnlyList<TerminalNotification> NotificationList() => _coordinator.ListNotifications();
 
-    public void NotificationDismiss(Guid notificationId) => _coordinator.DismissNotification(notificationId);
+    public void NotificationDismiss(Guid notificationId) =>
+        NotifyMutation(() => _coordinator.DismissNotification(notificationId));
 
-    public void NotificationDismissForSurface(SurfaceId surface) => _coordinator.DismissNotificationForSurface(surface);
+    public void NotificationDismissForSurface(SurfaceId surface) =>
+        NotifyMutation(() => _coordinator.DismissNotificationForSurface(surface));
 
-    public void NotificationDismissAllRead() => _coordinator.DismissAllRead();
+    public void NotificationDismissAllRead() => NotifyMutation(_coordinator.DismissAllRead);
 
-    public void NotificationClear() => _coordinator.ClearNotifications();
+    public void NotificationClear() => NotifyMutation(_coordinator.ClearNotifications);
 
-    public void NotificationMarkRead(Guid notificationId) => _coordinator.MarkRead(notificationId);
+    public void NotificationMarkRead(Guid notificationId) =>
+        NotifyMutation(() => _coordinator.MarkRead(notificationId));
 
-    public void NotificationMarkRead(SurfaceId surface) => _coordinator.MarkRead(surface);
+    public void NotificationMarkRead(SurfaceId surface) =>
+        NotifyMutation(() => _coordinator.MarkRead(surface));
 
-    public void NotificationMarkAllRead() => _coordinator.MarkAllRead();
+    public void NotificationMarkAllRead() => NotifyMutation(_coordinator.MarkAllRead);
+
+    private void NotifyMutation(Action mutate)
+    {
+        mutate();
+        NotificationsChanged?.Invoke();
+    }
 
     public bool NotificationOpen(Guid notificationId)
     {
@@ -186,11 +215,10 @@ public sealed class WorkspaceView : UserControl
         return true;
     }
 
-    /// <summary>Tear down every surface engine in order (R9) and unregister the toast activator.
-    /// Called from the window's Closed handler.</summary>
+    /// <summary>Tear down every surface engine in order (R9). Called by the host on workspace close
+    /// and window close (the shared toast activator is the host's to unregister).</summary>
     public void ShutdownAll()
     {
-        _toasts.Unregister();
         _surfaces.DisposeAll();
     }
 
@@ -256,8 +284,10 @@ public sealed class WorkspaceView : UserControl
         if (_controller.FocusedSurface != _lastFocusedSurface)
         {
             _lastFocusedSurface = _controller.FocusedSurface;
-            // Focusing a surface marks its notifications read and clears the pane flash (R6/AE6).
+            // Focusing a surface marks its notifications read and clears the pane flash (R6/AE6) —
+            // an unread mutation the sidebar badge must observe too (Phase 5).
             _coordinator.OnFocusChanged(snapshot);
+            NotificationsChanged?.Invoke();
             if (_lastFocusedSurface is SurfaceId focused)
             {
                 _surfaces.Get(focused)?.FocusSurface();
@@ -307,6 +337,7 @@ public sealed class WorkspaceView : UserControl
         _drainScheduled = false;
         // Re-derive owning pane + visibility from a fresh snapshot at delivery time (KTD6).
         bool more = _coordinator.Drain(_controller.Snapshot(), _appFocused);
+        NotificationsChanged?.Invoke();
         if (more)
         {
             ScheduleDrain();
@@ -329,7 +360,7 @@ public sealed class WorkspaceView : UserControl
         }
         if (surfaced.ShowToast)
         {
-            _toasts.Show(surfaced.Notification);
+            _toasts?.Show(surfaced.Notification);
         }
     }
 
@@ -409,6 +440,9 @@ public sealed class WorkspaceView : UserControl
             && !string.IsNullOrEmpty(t)
                 ? t
                 : "cmux";
+        // The focused surface's title doubles as the workspace's derived title (the sidebar row
+        // label, unless a custom title overrides it — Phase 5).
+        Model.SetTitle(title);
         ActiveTitleChanged?.Invoke(title);
     }
 }

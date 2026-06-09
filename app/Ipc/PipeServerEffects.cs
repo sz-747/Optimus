@@ -2,17 +2,17 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Cmux.Core;
-using Cmux.Splits;
+using Cmux.Sidebar;
 using Microsoft.UI.Dispatching;
 
 namespace Cmux.Ipc;
 
 internal sealed class PipeServerEffects : ISocketEffects
 {
-    private readonly WorkspaceView _workspace;
+    private readonly WorkspaceHost _workspace;
     private readonly Func<string, bool> _authenticate;
 
-    public PipeServerEffects(WorkspaceView workspace, Func<string, bool> authenticate)
+    public PipeServerEffects(WorkspaceHost workspace, Func<string, bool> authenticate)
     {
         _workspace = workspace ?? throw new System.ArgumentNullException(nameof(workspace));
         _authenticate = authenticate ?? throw new System.ArgumentNullException(nameof(authenticate));
@@ -100,13 +100,23 @@ internal sealed class PipeServerEffects : ISocketEffects
 
     public bool JumpToUnread() => InvokeOnDispatcher(_workspace.JumpToUnread);
 
-    public void SetStatus(string status) { }
-    public void SetProgress(string progress) { }
+    // Phase 5: status/progress/report verbs land on workspace metadata and feed the sidebar.
+    public void SetStatus(string status) => RunOnDispatcher(() => _workspace.SetStatus(status));
+
+    public void SetProgress(string progress) => RunOnDispatcher(() => _workspace.SetProgress(progress));
+
     public void LogLine(string line) { }
+
     public void SidebarState(string payload) { }
-    public void ReportGitBranch(SurfaceId surface, string branch, bool isDirty) { }
-    public void ReportPr(SurfaceId surface, string number, string label, string status, string? branch, bool isStale) { }
-    public void ReportPwd(SurfaceId surface, string path) { }
+
+    public void ReportGitBranch(SurfaceId surface, string branch, bool isDirty) =>
+        RunOnDispatcher(() => _workspace.ReportGitBranch(surface, branch, isDirty));
+
+    public void ReportPr(SurfaceId surface, string number, string label, string status, string? branch, bool isStale) =>
+        RunOnDispatcher(() => _workspace.ReportPr(surface, number, label, status, branch, isStale));
+
+    public void ReportPwd(SurfaceId surface, string path) =>
+        RunOnDispatcher(() => _workspace.ReportPwd(surface, path));
 
     private void RunOnDispatcher(Action action)
     {

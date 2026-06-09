@@ -19,7 +19,7 @@ namespace Cmux.Splits;
 /// background thread, so it copies the id out and marshals via the dispatcher — the same UI-thread
 /// hop discipline as <c>EngineHandle</c>'s host-event callback.</para>
 /// </summary>
-internal sealed class ToastService : IDisposable
+public sealed class ToastService : IDisposable
 {
     private const string SurfaceArgKey = "surfaceId";
 
