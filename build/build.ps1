@@ -73,4 +73,12 @@ Write-Host "==> dotnet $($dotnetArgs -join ' ')" -ForegroundColor Cyan
 & dotnet @dotnetArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet $verb failed ($LASTEXITCODE)" }
 
+# Build the cmux CLI (plan Phase 4 U4) alongside the app so `cmux.exe` ships with it.
+$cliProj = Join-Path $repo 'cli\Cmux.Cli.csproj'
+$cliArgs = @($verb, $cliProj, '-c', $Configuration)
+
+Write-Host "==> dotnet $($cliArgs -join ' ')" -ForegroundColor Cyan
+& dotnet @cliArgs
+if ($LASTEXITCODE -ne 0) { throw "dotnet $verb (cli) failed ($LASTEXITCODE)" }
+
 Write-Host "==> done ($Configuration / $Rid / $verb)" -ForegroundColor Green
