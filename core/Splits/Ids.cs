@@ -30,3 +30,20 @@ public readonly record struct BranchId(int Value)
 {
     public override string ToString() => $"B{Value}";
 }
+
+/// <summary>
+/// Mints pane/surface/branch ids, monotonic and never reused (KTD6). Phase 5 introduces multiple
+/// workspaces, each with its own <see cref="SplitTreeController"/>; sharing one allocator across all
+/// of them keeps <see cref="SurfaceId"/>s globally unique, so a surface id alone (e.g. from
+/// <c>CMUX_SURFACE_ID</c> over the Phase-4 pipe) unambiguously identifies its workspace.
+/// </summary>
+public sealed class IdAllocator
+{
+    private int _pane;
+    private int _surface;
+    private int _branch;
+
+    public PaneId NextPane() => new(++_pane);
+    public SurfaceId NextSurface() => new(++_surface);
+    public BranchId NextBranch() => new(++_branch);
+}

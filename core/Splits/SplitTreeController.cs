@@ -24,9 +24,7 @@ public sealed class SplitTreeController
     private PaneId _focusedPane;
     private PaneId? _zoomedPane;
 
-    private int _nextPane;
-    private int _nextSurface;
-    private int _nextBranch;
+    private readonly IdAllocator _ids;
     private int _version;
 
     /// <summary>Raised after any change to the tree, focus, or zoom. Carries the fresh snapshot.</summary>
@@ -48,9 +46,12 @@ public sealed class SplitTreeController
     /// Create a controller seeded with one pane holding one surface, that pane focused. The seed
     /// does <b>not</b> raise events (there are no subscribers yet); the host reads
     /// <see cref="AllSurfaces"/> after construction to create the initial engine.
+    /// <paramref name="ids"/> lets multiple workspaces share one allocator so surface ids stay
+    /// globally unique (Phase 5); when omitted the controller mints from its own.
     /// </summary>
-    public SplitTreeController()
+    public SplitTreeController(IdAllocator? ids = null)
     {
+        _ids = ids ?? new IdAllocator();
         SurfaceId surface = NextSurface();
         var pane = new PaneLeaf(NextPane(), ImmutableList.Create(surface), surface);
         _root = pane;
@@ -415,9 +416,9 @@ public sealed class SplitTreeController
 
     // ---- Id minting + emit -------------------------------------------------------------------
 
-    private PaneId NextPane() => new(++_nextPane);
-    private SurfaceId NextSurface() => new(++_nextSurface);
-    private BranchId NextBranch() => new(++_nextBranch);
+    private PaneId NextPane() => _ids.NextPane();
+    private SurfaceId NextSurface() => _ids.NextSurface();
+    private BranchId NextBranch() => _ids.NextBranch();
 
     private void Emit()
     {

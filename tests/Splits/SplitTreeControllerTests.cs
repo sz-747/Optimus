@@ -338,4 +338,24 @@ public sealed class SplitTreeControllerTests
         c.CloseTab(newSurface);
         Assert.Contains(newSurface, closed);
     }
+
+    // ---- Shared id allocation (Phase 5: multiple workspaces, globally unique ids) -------------
+
+    [Fact]
+    public void Controllers_sharing_an_allocator_never_mint_colliding_ids()
+    {
+        var ids = new IdAllocator();
+        var a = new SplitTreeController(ids);
+        var b = new SplitTreeController(ids);
+
+        a.NewTab(a.FocusedPane);
+        b.Split(b.FocusedPane, Orientation.Horizontal);
+        b.NewTab(b.FocusedPane);
+
+        var surfaces = a.AllSurfaces.Concat(b.AllSurfaces).ToList();
+        Assert.Equal(surfaces.Count, surfaces.Distinct().Count());
+
+        var panes = a.AllPaneIds.Concat(b.AllPaneIds).ToList();
+        Assert.Equal(panes.Count, panes.Distinct().Count());
+    }
 }
