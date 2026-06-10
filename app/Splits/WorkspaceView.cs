@@ -41,7 +41,9 @@ public sealed class WorkspaceView : UserControl
     private readonly NotificationCoordinator _coordinator = new();
     private readonly Dictionary<SurfaceId, Action<SurfaceNotification>> _notifyHandlers = new();
     private readonly ToastService? _toasts;
-    private bool _appFocused = true;
+
+    // False until the host pushes a real activation state — see WorkspaceHost._appFocused.
+    private bool _appFocused;
     private bool _drainScheduled;
 
     private SurfaceId? _lastFocusedSurface;

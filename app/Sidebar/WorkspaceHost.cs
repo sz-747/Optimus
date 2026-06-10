@@ -28,7 +28,11 @@ public sealed class WorkspaceHost : UserControl
     private readonly SidebarView _sidebar = new();
     private readonly Grid _content = new();
     private readonly ToastService _toasts;
-    private bool _appFocused = true;
+
+    // Starts false: a window launched without winning foreground (e.g. spawned from a background
+    // shell) never fires Window.Activated, and a stale "focused" default would suppress every
+    // notification (R4) until the user first clicks the window.
+    private bool _appFocused;
 
     /// <summary>Raised when the selected workspace's focused surface title changes — drives window chrome.</summary>
     public event Action<string>? ActiveTitleChanged;
