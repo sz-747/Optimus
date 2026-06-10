@@ -1,6 +1,6 @@
 using System;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// What a notification click should do. Phase 3 only ever focuses the originating surface (which is

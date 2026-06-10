@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace Cmux.Cli;
+namespace Optimus.Cli;
 
 /// <summary>
 /// What a parsed CLI invocation wants the process to do. Pure data so tests can assert on it
@@ -25,15 +25,15 @@ public sealed record LocalFileWrite(string RelativePath, string Content);
 public sealed record CliError(string Message, int ExitCode = 2);
 
 /// <summary>
-/// Pure argv → wire-frame parser for the cmux CLI (plan Phase 4 U4). No I/O: environment access
-/// goes through the injected resolver so tests can drive CMUX_SURFACE_ID / socket env precedence.
+/// Pure argv → wire-frame parser for the optimus CLI (plan Phase 4 U4). No I/O: environment access
+/// goes through the injected resolver so tests can drive OPTIMUS_SURFACE_ID / socket env precedence.
 /// </summary>
 public static class CliParser
 {
-    public const string SurfaceIdEnv = "CMUX_SURFACE_ID";
+    public const string SurfaceIdEnv = "OPTIMUS_SURFACE_ID";
 
     private static readonly string Usage = string.Join('\n',
-        "usage: cmux [--socket <pipe>] [--variant <name>] <command> [options]",
+        "usage: optimus [--socket <pipe>] [--variant <name>] <command> [options]",
         "",
         "commands:",
         "  notify --title <t> [--subtitle <s>] [--body <b>] [--workspace <w>] [--surface <S#>]",
@@ -267,7 +267,7 @@ public static class CliParser
 
         if (!TryResolveSurface(surface, getEnv, out string resolved))
         {
-            return new CliError("report_git_branch: no --surface and CMUX_SURFACE_ID is not set");
+            return new CliError("report_git_branch: no --surface and OPTIMUS_SURFACE_ID is not set");
         }
 
         bool isDirty = string.Equals(status, "dirty", StringComparison.OrdinalIgnoreCase);
@@ -306,7 +306,7 @@ public static class CliParser
 
         if (!TryResolveSurface(surface, getEnv, out string resolved))
         {
-            return new CliError("report_pr: no --surface and CMUX_SURFACE_ID is not set");
+            return new CliError("report_pr: no --surface and OPTIMUS_SURFACE_ID is not set");
         }
 
         return Single(V2("report_pr", w =>
@@ -338,7 +338,7 @@ public static class CliParser
 
         if (!TryResolveSurface(surface, getEnv, out string resolved))
         {
-            return new CliError("report_pwd: no --surface and CMUX_SURFACE_ID is not set");
+            return new CliError("report_pwd: no --surface and OPTIMUS_SURFACE_ID is not set");
         }
 
         return Single(V2("report_pwd", w =>

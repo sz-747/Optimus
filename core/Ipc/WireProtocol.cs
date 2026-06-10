@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Newline-framed wire helpers shared by CLI and app socket handlers.

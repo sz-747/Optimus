@@ -2,14 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
-using Cmux.Cli;
+using Optimus.Cli;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Phase 4 U5: agent hook runtime verb + snippet generation. Plan acceptance: "an agent hook
-/// fires a notification on stop", gated on CMUX_SURFACE_ID.
+/// fires a notification on stop", gated on OPTIMUS_SURFACE_ID.
 /// </summary>
 public sealed class HooksCommandTests
 {
@@ -48,7 +48,7 @@ public sealed class HooksCommandTests
         Assert.Equal("Refactor finished, 3 files changed", p.GetProperty("body").GetString());
     }
 
-    [Fact] // The CMUX_SURFACE_ID gate: outside a cmux pane hooks are silent no-ops.
+    [Fact] // The OPTIMUS_SURFACE_ID gate: outside a optimus pane hooks are silent no-ops.
     public void Hook_without_surface_env_sends_nothing()
     {
         CliInvocation inv = ParseOk(["hooks", "claude", "stop"]);
@@ -96,8 +96,8 @@ public sealed class HooksCommandTests
         Assert.NotNull(inv.FileWrites);
         Assert.Equal(2, inv.FileWrites!.Count);
         Assert.Equal(@"C:\tmp\hooks", inv.InstallDir);
-        Assert.Contains(inv.FileWrites, w => w.RelativePath == "cmux-codex-hook.ps1");
-        Assert.Contains(inv.FileWrites, w => w.RelativePath == "cmux-codex-hook.cmd");
+        Assert.Contains(inv.FileWrites, w => w.RelativePath == "optimus-codex-hook.ps1");
+        Assert.Contains(inv.FileWrites, w => w.RelativePath == "optimus-codex-hook.cmd");
         Assert.Empty(inv.Frames);
     }
 
@@ -106,8 +106,8 @@ public sealed class HooksCommandTests
     {
         string snippet = HooksCommand.Snippet(HooksCommand.Find("gemini")!, "ps1");
 
-        Assert.Contains("$env:CMUX_SURFACE_ID", snippet);
-        Assert.Contains("cmux hooks gemini", snippet);
+        Assert.Contains("$env:OPTIMUS_SURFACE_ID", snippet);
+        Assert.Contains("optimus hooks gemini", snippet);
         Assert.Contains("$input |", snippet);
         Assert.Contains("exit 0", snippet);
     }
@@ -117,8 +117,8 @@ public sealed class HooksCommandTests
     {
         string snippet = HooksCommand.Snippet(HooksCommand.Find("cursor")!, "cmd");
 
-        Assert.Contains("%CMUX_SURFACE_ID%", snippet);
-        Assert.Contains("cmux hooks cursor", snippet);
+        Assert.Contains("%OPTIMUS_SURFACE_ID%", snippet);
+        Assert.Contains("optimus hooks cursor", snippet);
         Assert.Contains("exit /b 0", snippet);
     }
 
@@ -128,7 +128,7 @@ public sealed class HooksCommandTests
         CliInvocation inv = ParseOk(["hooks", "print", "copilot", "--format", "cmd"]);
 
         Assert.Empty(inv.Frames);
-        Assert.Contains("cmux hooks copilot", inv.StdOut);
+        Assert.Contains("optimus hooks copilot", inv.StdOut);
     }
 
     [Fact]

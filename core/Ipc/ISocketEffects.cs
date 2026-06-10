@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Socket-command effect surface (Core/U4): command handlers call this interface instead of WinUI.

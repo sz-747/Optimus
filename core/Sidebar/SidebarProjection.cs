@@ -2,7 +2,7 @@ using System;
 using System.Collections.Immutable;
 using System.Linq;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// A value-type snapshot of one sidebar row (plan Phase 5 U3 — the issue-#2586 snapshot-boundary
@@ -27,7 +27,7 @@ public readonly record struct SidebarRowDto(
 
 /// <summary>
 /// Pure projection from the workspace list to the immutable rows the sidebar renders. Kept in
-/// <c>Cmux.Core</c> so it is unit-testable without WinUI, like <see cref="TabHeaderProjection"/>.
+/// <c>Optimus.Core</c> so it is unit-testable without WinUI, like <see cref="TabHeaderProjection"/>.
 /// </summary>
 public static class SidebarProjection
 {

@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
-using Cmux.Cli;
+using Optimus.Cli;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Phase 4 U4: argv → wire-frame parsing. Asserts on the exact V2 JSON the CLI will write to the
@@ -38,7 +38,7 @@ public sealed class CliParserTests
         return JsonDocument.Parse(frame).RootElement;
     }
 
-    [Fact] // Plan acceptance: `cmux notify --title X --body Y` from inside a pane targets the caller.
+    [Fact] // Plan acceptance: `optimus notify --title X --body Y` from inside a pane targets the caller.
     public void Notify_without_surface_routes_to_create_for_caller_with_env_surface()
     {
         CliInvocation inv = ParseOk(
@@ -95,7 +95,7 @@ public sealed class CliParserTests
         Assert.Equal(4u, root.GetProperty("params").GetProperty("modifiers").GetUInt32());
     }
 
-    [Fact] // Plan acceptance: `cmux report_git_branch main --status=dirty` updates app state.
+    [Fact] // Plan acceptance: `optimus report_git_branch main --status=dirty` updates app state.
     public void ReportGitBranch_uses_env_surface_and_dirty_flag()
     {
         CliInvocation inv = ParseOk(
@@ -175,9 +175,9 @@ public sealed class CliParserTests
     [Fact]
     public void Global_socket_and_variant_flags_are_extracted()
     {
-        CliInvocation inv = ParseOk(["--socket", @"\\.\pipe\cmux-dev", "--variant", "dev", "ping"]);
+        CliInvocation inv = ParseOk(["--socket", @"\\.\pipe\optimus-dev", "--variant", "dev", "ping"]);
 
-        Assert.Equal(@"\\.\pipe\cmux-dev", inv.ExplicitSocket);
+        Assert.Equal(@"\\.\pipe\optimus-dev", inv.ExplicitSocket);
         Assert.Equal("dev", inv.Variant);
         Assert.Equal("system.ping", SingleFrame(inv).GetProperty("method").GetString());
     }

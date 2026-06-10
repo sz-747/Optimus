@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// The single owner of workspaces (plan Phase 5): an ordered list with one selected, the workspace
 /// analog of <see cref="SurfaceManager"/>. All workspace controllers share one
-/// <see cref="IdAllocator"/>, so a bare <see cref="SurfaceId"/> (e.g. <c>CMUX_SURFACE_ID</c> from
+/// <see cref="IdAllocator"/>, so a bare <see cref="SurfaceId"/> (e.g. <c>OPTIMUS_SURFACE_ID</c> from
 /// the Phase-4 pipe) resolves to exactly one workspace via <see cref="FindBySurface"/> — that is
 /// how surface-keyed <c>report_*</c> commands land on the right sidebar row.
 ///

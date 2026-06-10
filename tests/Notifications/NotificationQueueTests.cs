@@ -1,8 +1,8 @@
 using System.Collections.Generic;
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Coverage for <see cref="NotificationQueue"/> (plan Phase 3 U4) — the burst absorber: coalescing

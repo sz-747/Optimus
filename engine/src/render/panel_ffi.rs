@@ -3,7 +3,7 @@
 //! This is the *minimal* hand-rolled FFI that lets the WinUI 3 host drive the wgpu
 //! renderer: create a [`PanelRenderer`] from an `ISwapChainPanel*`, clear+present a
 //! frame, resize, and destroy. The full csbindgen-generated ABI is U3; these few
-//! `cmux_spike_*` entry points exist only to prove the wgpu↔SwapChainPanel path
+//! `optimus_spike_*` entry points exist only to prove the wgpu↔SwapChainPanel path
 //! end-to-end before that scaffolding is built.
 //!
 //! Every entry point catches panics at the boundary — a Rust panic unwinding across
@@ -20,9 +20,9 @@ use super::PanelRenderer;
 ///
 /// # Safety
 /// `panel` must be a valid `ISwapChainPanel*` (from `ISwapChainPanelNative`). The
-/// returned pointer must be released exactly once with [`cmux_spike_renderer_destroy`].
+/// returned pointer must be released exactly once with [`optimus_spike_renderer_destroy`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_spike_renderer_create(
+pub unsafe extern "C" fn optimus_spike_renderer_create(
     panel: *mut c_void,
     width: u32,
     height: u32,
@@ -46,9 +46,9 @@ pub unsafe extern "C" fn cmux_spike_renderer_create(
 /// outdated — surface was reconfigured), `-1` = null handle or panic at the boundary.
 ///
 /// # Safety
-/// `renderer` must be a live handle from [`cmux_spike_renderer_create`].
+/// `renderer` must be a live handle from [`optimus_spike_renderer_create`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_spike_renderer_render(
+pub unsafe extern "C" fn optimus_spike_renderer_render(
     renderer: *mut PanelRenderer,
     r: f64,
     g: f64,
@@ -72,9 +72,9 @@ pub unsafe extern "C" fn cmux_spike_renderer_render(
 /// Resize the panel's swapchain to `width`×`height` physical pixels.
 ///
 /// # Safety
-/// `renderer` must be a live handle from [`cmux_spike_renderer_create`].
+/// `renderer` must be a live handle from [`optimus_spike_renderer_create`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_spike_renderer_resize(
+pub unsafe extern "C" fn optimus_spike_renderer_resize(
     renderer: *mut PanelRenderer,
     width: u32,
     height: u32,
@@ -92,14 +92,14 @@ pub unsafe extern "C" fn cmux_spike_renderer_resize(
 /// Destroy a renderer handle. Safe to call with null (no-op).
 ///
 /// # Safety
-/// `renderer` must be a handle from [`cmux_spike_renderer_create`] not already destroyed.
+/// `renderer` must be a handle from [`optimus_spike_renderer_create`] not already destroyed.
 #[no_mangle]
-pub unsafe extern "C" fn cmux_spike_renderer_destroy(renderer: *mut PanelRenderer) {
+pub unsafe extern "C" fn optimus_spike_renderer_destroy(renderer: *mut PanelRenderer) {
     if renderer.is_null() {
         return;
     }
     let _ = catch_unwind(AssertUnwindSafe(|| {
-        // SAFETY: reclaim the Box created in `cmux_spike_renderer_create`.
+        // SAFETY: reclaim the Box created in `optimus_spike_renderer_create`.
         drop(unsafe { Box::from_raw(renderer) });
     }));
 }

@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-  Build the cmux engine (Rust cdylib) and the WinUI 3 app (plan §8 U2 / §9.3).
+  Build the optimus engine (Rust cdylib) and the WinUI 3 app (plan §8 U2 / §9.3).
 
 .DESCRIPTION
-  1. cargo build the engine -> engine\target\<profile>\cmux_engine.dll
+  1. cargo build the engine -> engine\target\<profile>\optimus_engine.dll
      (this also runs the csbindgen build.rs that regenerates NativeMethods.g.cs).
-  2. dotnet build (or publish) the app; the csproj stages cmux_engine.dll next to Cmux.exe.
+  2. dotnet build (or publish) the app; the csproj stages optimus_engine.dll next to Optimus.exe.
 
   cargo is invoked from its known install location because it is frequently not on PATH.
 
@@ -34,7 +34,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $engineDir = Join-Path $repo 'engine'
-$appProj = Join-Path $repo 'app\Cmux.App.csproj'
+$appProj = Join-Path $repo 'app\Optimus.App.csproj'
 
 # Locate cargo (commonly not on PATH).
 $cargo = (Get-Command cargo -ErrorAction SilentlyContinue).Source
@@ -64,17 +64,17 @@ if ($EngineOnly) {
     return
 }
 
-# The csproj's BuildCmuxEngine target would rebuild the engine too; skip it here since we
+# The csproj's BuildOptimusEngine target would rebuild the engine too; skip it here since we
 # just built it, so the .NET step doesn't shell out to cargo a second time.
 $verb = if ($Publish) { 'publish' } else { 'build' }
-$dotnetArgs = @($verb, $appProj, '-c', $Configuration, '-r', $Rid, '-p:SkipCmuxEngineBuild=true')
+$dotnetArgs = @($verb, $appProj, '-c', $Configuration, '-r', $Rid, '-p:SkipOptimusEngineBuild=true')
 
 Write-Host "==> dotnet $($dotnetArgs -join ' ')" -ForegroundColor Cyan
 & dotnet @dotnetArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet $verb failed ($LASTEXITCODE)" }
 
-# Build the cmux CLI (plan Phase 4 U4) alongside the app so `cmux.exe` ships with it.
-$cliProj = Join-Path $repo 'cli\Cmux.Cli.csproj'
+# Build the optimus CLI (plan Phase 4 U4) alongside the app so `optimus.exe` ships with it.
+$cliProj = Join-Path $repo 'cli\Optimus.Cli.csproj'
 $cliArgs = @($verb, $cliProj, '-c', $Configuration)
 
 Write-Host "==> dotnet $($cliArgs -join ' ')" -ForegroundColor Cyan

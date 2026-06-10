@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Coverage for <see cref="NotificationCoordinator"/> (plan Phase 3 U6) — the integration seam that

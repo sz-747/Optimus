@@ -1,9 +1,9 @@
 using System;
 using System.Text;
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 public sealed class PasswordStoreTests
 {
@@ -31,7 +31,7 @@ public sealed class PasswordStoreTests
             secretProtector: protector,
             getEnv: _ => null,
             getLocalAppData: () => @"C:\users\app\Local",
-            fileExists: path => string.Equals(path, @"C:\users\app\Local\cmux\cmux-socket-password.bin"),
+            fileExists: path => string.Equals(path, @"C:\users\app\Local\optimus\optimus-socket-password.bin"),
             readFile: path => protector.Protect(Encoding.UTF8.GetBytes(expected)));
 
         Assert.True(store.Verify(expected));

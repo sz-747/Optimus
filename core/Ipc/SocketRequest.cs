@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Shared request/response envelope types for socket traffic.

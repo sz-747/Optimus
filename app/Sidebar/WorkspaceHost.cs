@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using Cmux.Core;
-using Cmux.Splits;
+using Optimus.Core;
+using Optimus.Splits;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
-namespace Cmux.Sidebar;
+namespace Optimus.Sidebar;
 
 /// <summary>
 /// The multi-workspace shell (plan Phase 5): a <see cref="SidebarView"/> beside a content area
@@ -138,7 +138,7 @@ public sealed class WorkspaceHost : UserControl
     {
         if (id == _manager.SelectedId)
         {
-            ActiveTitleChanged?.Invoke(string.IsNullOrEmpty(title) ? "cmux" : title);
+            ActiveTitleChanged?.Invoke(string.IsNullOrEmpty(title) ? "optimus" : title);
         }
     }
 
@@ -195,7 +195,7 @@ public sealed class WorkspaceHost : UserControl
 
     public void CreateNotificationForCaller(string? preferredSurfaceId, string title, string subtitle, string body)
     {
-        // A parseable CMUX_SURFACE_ID pins the caller's workspace; otherwise the selected one hosts.
+        // A parseable OPTIMUS_SURFACE_ID pins the caller's workspace; otherwise the selected one hosts.
         WorkspaceView view = SelectedView;
         if (TryParseSurfaceId(preferredSurfaceId, out SurfaceId surface) && ViewOf(surface) is WorkspaceView owner)
         {

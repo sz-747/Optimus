@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
-using Cmux.Core;
-using Cmux.Interop;
+using Optimus.Core;
+using Optimus.Interop;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -10,7 +10,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using Windows.UI.Core;
 
-namespace Cmux.Controls;
+namespace Optimus.Controls;
 
 /// <summary>
 /// One terminal surface (plan §8, Phase 1; Phase 2 U2): hosts the <see cref="SwapChainPanel"/> the

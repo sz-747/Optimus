@@ -175,20 +175,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
-name = "cmux_engine"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "csbindgen",
- "glyphon",
- "pollster",
- "termwiz",
- "wezterm-term",
- "wgpu",
- "windows",
-]
-
-[[package]]
 name = "codespan-reporting"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1166,6 +1152,20 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "optimus_engine"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "csbindgen",
+ "glyphon",
+ "pollster",
+ "termwiz",
+ "wezterm-term",
+ "wgpu",
+ "windows",
+]
 
 [[package]]
 name = "ordered-float"

@@ -1,8 +1,8 @@
 using System.Linq;
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Coverage for <see cref="NotificationStore"/> (plan Phase 3 U3): the ordered, newest-first record

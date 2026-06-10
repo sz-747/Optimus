@@ -1,4 +1,4 @@
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Identity of a pane (a leaf in the split tree that owns an ordered tab list). Wraps a
@@ -23,7 +23,7 @@ public readonly record struct SurfaceId(int Value)
 /// <summary>
 /// Identity of a split branch (an interior node). Lets the view map a divider drag back to the
 /// exact branch regardless of how the tree is later re-shaped — the Windows analog of bonsplit's
-/// per-split UUID (cmux/Sources/Workspace.swift <c>setDividerPosition(_:forSplit:)</c>). Stable
+/// per-split UUID (optimus/Sources/Workspace.swift <c>setDividerPosition(_:forSplit:)</c>). Stable
 /// across rewrites: an operation that does not touch a branch preserves its id.
 /// </summary>
 public readonly record struct BranchId(int Value)
@@ -35,7 +35,7 @@ public readonly record struct BranchId(int Value)
 /// Mints pane/surface/branch ids, monotonic and never reused (KTD6). Phase 5 introduces multiple
 /// workspaces, each with its own <see cref="SplitTreeController"/>; sharing one allocator across all
 /// of them keeps <see cref="SurfaceId"/>s globally unique, so a surface id alone (e.g. from
-/// <c>CMUX_SURFACE_ID</c> over the Phase-4 pipe) unambiguously identifies its workspace.
+/// <c>OPTIMUS_SURFACE_ID</c> over the Phase-4 pipe) unambiguously identifies its workspace.
 /// </summary>
 public sealed class IdAllocator
 {

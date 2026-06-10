@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// A notification that has cleared policy and is ready to surface (plan Phase 3 U6). Carries the

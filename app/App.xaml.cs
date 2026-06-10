@@ -3,20 +3,20 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
-using Cmux.Ipc;
-using Cmux.Core;
+using Optimus.Ipc;
+using Optimus.Core;
 
-namespace Cmux;
+namespace Optimus;
 
 /// <summary>
-/// Application entry point for the cmux WinUI 3 shell (plan §4). Phase 1 opens a single
+/// Application entry point for the optimus WinUI 3 shell (plan §4). Phase 1 opens a single
 /// window hosting one terminal pane.
 /// </summary>
 public partial class App : Application
 {
     private Window? _window;
     private PipeServer? _pipeServer;
-    private SocketControlMode _socketControlMode = SocketControlMode.CmuxOnly;
+    private SocketControlMode _socketControlMode = SocketControlMode.OptimusOnly;
     private PipeServerEffects? _pipeServerEffects;
     private readonly PasswordStore _passwordStore = new();
     private bool _socketAuthenticated;

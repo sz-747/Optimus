@@ -84,7 +84,7 @@ impl AlertHandler for EngineAlertHandler {
 /// Construct a `wezterm-term` `Terminal` wired to `writer` (the PTY input) and the host sink.
 pub fn build_terminal(size: TerminalSize, scrollback: usize, writer: Box<dyn std::io::Write + Send>, sink: SharedSink) -> Terminal {
     let config = Arc::new(TermConfig::new(scrollback));
-    let mut terminal = Terminal::new(size, config, "cmux", env!("CARGO_PKG_VERSION"), writer);
+    let mut terminal = Terminal::new(size, config, "optimus", env!("CARGO_PKG_VERSION"), writer);
     terminal.set_notification_handler(Box::new(EngineAlertHandler::new(sink)));
     terminal
 }

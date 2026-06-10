@@ -3,7 +3,7 @@
 //! Spawns a real shell in a pseudoconsole, writes a command, reads VT output on a
 //! dedicated thread to EOF, and exercises `ResizePseudoConsole` + clean shutdown.
 
-use cmux_engine::pty::ConPty;
+use optimus_engine::pty::ConPty;
 use std::thread;
 use std::time::Duration;
 
@@ -48,7 +48,7 @@ fn conpty_roundtrip_cmd_echo() {
     );
 
     // Drive the shell: type a command that prints a unique marker.
-    pty.write(b"echo CMUX_CONPTY_OK\r\n")
+    pty.write(b"echo OPTIMUS_CONPTY_OK\r\n")
         .expect("write echo command");
     // Give conhost time to process input and render the marker into the VT stream.
     thread::sleep(Duration::from_millis(500));
@@ -70,7 +70,7 @@ fn conpty_roundtrip_cmd_echo() {
 
     let text = String::from_utf8_lossy(&out);
     assert!(
-        text.contains("CMUX_CONPTY_OK"),
+        text.contains("OPTIMUS_CONPTY_OK"),
         "expected marker in pseudoconsole output; got {} bytes:\n{text}",
         out.len()
     );

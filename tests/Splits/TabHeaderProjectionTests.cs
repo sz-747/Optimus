@@ -1,10 +1,10 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Coverage for <see cref="TabHeaderProjection"/> (plan Phase 2 U4): the pure model→header mapping

@@ -14,7 +14,7 @@ use std::slice;
 use self::events::ByteBuffer;
 
 thread_local! {
-    /// Last error message for the current thread, surfaced via `cmux_last_error_message`.
+    /// Last error message for the current thread, surfaced via `optimus_last_error_message`.
     static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
@@ -70,7 +70,7 @@ pub unsafe fn str_arg<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
 }
 
 /// Write `s` (UTF-8) into `*out` as an owned [`ByteBuffer`] the caller must free with
-/// `cmux_buffer_free`. Returns `0` on success, `-1` if `out` is null.
+/// `optimus_buffer_free`. Returns `0` on success, `-1` if `out` is null.
 ///
 /// # Safety
 /// `out` must be a valid, writable `*mut ByteBuffer` (or null, handled as an error).

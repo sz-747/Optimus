@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Pipe discovery order + probe helper for connecting to a live server.

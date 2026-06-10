@@ -2,7 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml.Controls;
 
-namespace Cmux.Interop;
+namespace Optimus.Interop;
 
 /// <summary>
 /// Helper for obtaining the native <c>ISwapChainPanelNative*</c> behind a WinUI 3
@@ -23,7 +23,7 @@ internal static class SwapChainPanelNativeInterop
     /// QI <paramref name="panel"/> for <c>ISwapChainPanelNative</c> and return the raw,
     /// <b>AddRef'd</b> pointer. The caller owns one reference and MUST release it with
     /// <see cref="System.Runtime.InteropServices.Marshal.Release(IntPtr)"/> once the engine has
-    /// detached (after <c>cmux_engine_destroy</c>, which drops wgpu's own ref on the panel).
+    /// detached (after <c>optimus_engine_destroy</c>, which drops wgpu's own ref on the panel).
     /// </summary>
     /// <exception cref="InvalidOperationException">QueryInterface failed.</exception>
     public static IntPtr GetNativePointer(SwapChainPanel panel)

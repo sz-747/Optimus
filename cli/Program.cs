@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
-using Cmux.Core;
+using Optimus.Core;
 
-namespace Cmux.Cli;
+namespace Optimus.Cli;
 
 /// <summary>
-/// The cmux CLI entry point (plan Phase 4 U4). All decisions live in the pure
+/// The optimus CLI entry point (plan Phase 4 U4). All decisions live in the pure
 /// <see cref="CliParser"/>/<see cref="HooksCommand"/> layer; this shell only does I/O:
 /// read stdin when redirected, resolve the pipe, send frames, print, set the exit code.
 /// </summary>
@@ -34,7 +34,7 @@ public static class Program
         if (invocation.FileWrites is { Count: > 0 })
         {
             string dir = invocation.InstallDir
-                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cmuxterm", "hooks");
+                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".optimusterm", "hooks");
             Directory.CreateDirectory(dir);
             foreach (LocalFileWrite write in invocation.FileWrites)
             {
@@ -57,7 +57,7 @@ public static class Program
         }
         catch (Exception ex) when (ex is TimeoutException or IOException or UnauthorizedAccessException)
         {
-            Console.Error.WriteLine($"cmux: cannot reach the app on \"{pipe}\": {ex.Message}");
+            Console.Error.WriteLine($"optimus: cannot reach the app on \"{pipe}\": {ex.Message}");
             return 1;
         }
     }
@@ -83,7 +83,7 @@ public static class Program
         {
             if (response is null)
             {
-                Console.Error.WriteLine("cmux: connection closed before a response arrived");
+                Console.Error.WriteLine("optimus: connection closed before a response arrived");
                 exit = 1;
                 continue;
             }
@@ -127,7 +127,7 @@ public static class Program
                     && err.TryGetProperty("message", out JsonElement msg)
                         ? msg.GetString() ?? "unknown error"
                         : "unknown error";
-                Console.Error.WriteLine($"cmux: {message}");
+                Console.Error.WriteLine($"optimus: {message}");
                 exit = 1;
             }
 

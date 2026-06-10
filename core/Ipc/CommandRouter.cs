@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Pure socket dispatch for the Phase 4 IPC contract. Parses one framed line, validates the command

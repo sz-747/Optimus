@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 
-namespace Cmux.Ipc;
+namespace Optimus.Ipc;
 
 /// <summary>
 /// Windows peer identity helpers for named-pipe callers.

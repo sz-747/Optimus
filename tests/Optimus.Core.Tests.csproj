@@ -3,7 +3,7 @@
   <!-- Unit tests for the UI-free split-tree core (plan Phase 2 U1). Plain net9.0 + xUnit; no WinUI. -->
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
-    <RootNamespace>Cmux.Core.Tests</RootNamespace>
+    <RootNamespace>Optimus.Core.Tests</RootNamespace>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -18,8 +18,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\core\Cmux.Core.csproj" />
-    <ProjectReference Include="..\cli\Cmux.Cli.csproj" />
+    <ProjectReference Include="..\core\Optimus.Core.csproj" />
+    <ProjectReference Include="..\cli\Optimus.Cli.csproj" />
   </ItemGroup>
 
 </Project>

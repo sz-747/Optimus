@@ -1,6 +1,6 @@
-//! cmux for Windows — terminal engine.
+//! optimus for Windows — terminal engine.
 //!
-//! This crate is built as a `cdylib` (`cmux_engine.dll`) consumed by the C# WinUI 3
+//! This crate is built as a `cdylib` (`optimus_engine.dll`) consumed by the C# WinUI 3
 //! app over a C ABI (plan §6), and as an `rlib` so the in-tree spikes/tests can link the
 //! engine directly.
 //!
@@ -32,13 +32,13 @@ pub use crate::ffi::events::event_kind;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Create an engine. `opts` may be null (selects defaults). Returns an opaque handle, or
-/// null on failure (see `cmux_last_error_message`).
+/// null on failure (see `optimus_last_error_message`).
 ///
 /// # Safety
 /// `opts`, if non-null, must point to a valid [`EngineOptions`]. The returned handle must
-/// be freed exactly once with [`cmux_engine_destroy`].
+/// be freed exactly once with [`optimus_engine_destroy`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_create(opts: *const EngineOptions) -> *mut Engine {
+pub unsafe extern "C" fn optimus_engine_create(opts: *const EngineOptions) -> *mut Engine {
     ffi::guard(std::ptr::null_mut(), || {
         let options = if opts.is_null() {
             EngineOptions::default()
@@ -53,14 +53,14 @@ pub unsafe extern "C" fn cmux_engine_create(opts: *const EngineOptions) -> *mut 
 /// Destroy an engine handle (stops threads, drops the PTY + GPU resources). Null-safe.
 ///
 /// # Safety
-/// `engine` must be a handle from [`cmux_engine_create`] not already destroyed.
+/// `engine` must be a handle from [`optimus_engine_create`] not already destroyed.
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_destroy(engine: *mut Engine) {
+pub unsafe extern "C" fn optimus_engine_destroy(engine: *mut Engine) {
     if engine.is_null() {
         return;
     }
     let _ = ffi::guard((), || {
-        // SAFETY: reclaim the Box created in `cmux_engine_create`.
+        // SAFETY: reclaim the Box created in `optimus_engine_create`.
         drop(unsafe { Box::from_raw(engine) });
     });
 }
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn cmux_engine_destroy(engine: *mut Engine) {
 /// # Safety
 /// `engine` must be a live handle; `panel` a valid, live `ISwapChainPanel*`.
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_attach_swapchain_panel(
+pub unsafe extern "C" fn optimus_engine_attach_swapchain_panel(
     engine: *mut Engine,
     panel: *mut c_void,
 ) -> i32 {
@@ -98,9 +98,9 @@ pub unsafe extern "C" fn cmux_engine_attach_swapchain_panel(
 /// Detach the renderer surface (panel going away). Null-safe.
 ///
 /// # Safety
-/// `engine` must be a live handle from [`cmux_engine_create`].
+/// `engine` must be a live handle from [`optimus_engine_create`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_detach(engine: *mut Engine) {
+pub unsafe extern "C" fn optimus_engine_detach(engine: *mut Engine) {
     let _ = ffi::guard((), || {
         if let Some(engine) = unsafe { engine.as_mut() } {
             engine.detach();
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn cmux_engine_detach(engine: *mut Engine) {
 /// # Safety
 /// `engine` live; `cmdline_utf8`/`cwd_utf8` valid for their lengths (or null when len 0).
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_spawn_shell(
+pub unsafe extern "C" fn optimus_engine_spawn_shell(
     engine: *mut Engine,
     cmdline_utf8: *const u8,
     cmdline_len: usize,
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn cmux_engine_spawn_shell(
 /// # Safety
 /// `engine` live; `utf8` valid for `len` bytes (or null when `len == 0`).
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_send_text(engine: *mut Engine, utf8: *const u8, len: usize) {
+pub unsafe extern "C" fn optimus_engine_send_text(engine: *mut Engine, utf8: *const u8, len: usize) {
     let _ = ffi::guard((), || {
         let Some(engine) = (unsafe { engine.as_mut() }) else {
             return;
@@ -169,9 +169,9 @@ pub unsafe extern "C" fn cmux_engine_send_text(engine: *mut Engine, utf8: *const
 /// (see the C# `KeyModifiers`); `down` is press vs release.
 ///
 /// # Safety
-/// `engine` must be a live handle from [`cmux_engine_create`].
+/// `engine` must be a live handle from [`optimus_engine_create`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_send_key(
+pub unsafe extern "C" fn optimus_engine_send_key(
     engine: *mut Engine,
     vk: u32,
     modifiers: u32,
@@ -188,9 +188,9 @@ pub unsafe extern "C" fn cmux_engine_send_key(
 /// are enums mirrored on the C# side.
 ///
 /// # Safety
-/// `engine` must be a live handle from [`cmux_engine_create`].
+/// `engine` must be a live handle from [`optimus_engine_create`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_send_mouse(
+pub unsafe extern "C" fn optimus_engine_send_mouse(
     engine: *mut Engine,
     x: f32,
     y: f32,
@@ -208,9 +208,9 @@ pub unsafe extern "C" fn cmux_engine_send_mouse(
 /// Send a scroll event (`delta_lines`: +up / -down).
 ///
 /// # Safety
-/// `engine` must be a live handle from [`cmux_engine_create`].
+/// `engine` must be a live handle from [`optimus_engine_create`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_send_scroll(engine: *mut Engine, delta_lines: f32) {
+pub unsafe extern "C" fn optimus_engine_send_scroll(engine: *mut Engine, delta_lines: f32) {
     let _ = ffi::guard((), || {
         if let Some(engine) = unsafe { engine.as_mut() } {
             engine.send_scroll(delta_lines);
@@ -225,9 +225,9 @@ pub unsafe extern "C" fn cmux_engine_send_scroll(engine: *mut Engine, delta_line
 /// Resize the grid, GPU surface, and pseudoconsole together. Returns `0` / `<0`.
 ///
 /// # Safety
-/// `engine` must be a live handle from [`cmux_engine_create`].
+/// `engine` must be a live handle from [`optimus_engine_create`].
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_resize(
+pub unsafe extern "C" fn optimus_engine_resize(
     engine: *mut Engine,
     cols: u16,
     rows: u16,
@@ -256,12 +256,12 @@ pub unsafe extern "C" fn cmux_engine_resize(
 
 /// Write the current selection (UTF-8) into `*out`. Returns `0` if there is a selection,
 /// `1` if there is none (and `*out` is set to an empty buffer), `<0` on error. Free `*out`
-/// with [`cmux_buffer_free`].
+/// with [`optimus_buffer_free`].
 ///
 /// # Safety
 /// `engine` live; `out` a valid writable `*mut ByteBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_selection_text(
+pub unsafe extern "C" fn optimus_engine_selection_text(
     engine: *mut Engine,
     out: *mut ByteBuffer,
 ) -> i32 {
@@ -293,7 +293,7 @@ pub unsafe extern "C" fn cmux_engine_selection_text(
 /// # Safety
 /// `buf` must be a buffer returned by this library and not already freed.
 #[no_mangle]
-pub unsafe extern "C" fn cmux_buffer_free(buf: ByteBuffer) {
+pub unsafe extern "C" fn optimus_buffer_free(buf: ByteBuffer) {
     let _ = ffi::guard((), || {
         // SAFETY: buffer originated from `ByteBuffer::from_vec` in this library.
         unsafe { buf.free() };
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn cmux_buffer_free(buf: ByteBuffer) {
 /// `engine` live; `cb` a valid C-ABI function pointer; `user_data` valid for the engine's
 /// lifetime.
 #[no_mangle]
-pub unsafe extern "C" fn cmux_engine_set_event_callback(
+pub unsafe extern "C" fn optimus_engine_set_event_callback(
     engine: *mut Engine,
     cb: HostEventFn,
     user_data: *mut c_void,
@@ -330,12 +330,12 @@ pub unsafe extern "C" fn cmux_engine_set_event_callback(
 
 /// Write the calling thread's last error message (UTF-8) into `*out`. Returns `0` if a
 /// message was available, `1` if none (empty buffer written), `<0` on error. Clears the
-/// stored error. Free `*out` with [`cmux_buffer_free`].
+/// stored error. Free `*out` with [`optimus_buffer_free`].
 ///
 /// # Safety
 /// `out` must be a valid writable `*mut ByteBuffer`.
 #[no_mangle]
-pub unsafe extern "C" fn cmux_last_error_message(out: *mut ByteBuffer) -> i32 {
+pub unsafe extern "C" fn optimus_last_error_message(out: *mut ByteBuffer) -> i32 {
     ffi::guard(-1, || {
         if out.is_null() {
             return -1;

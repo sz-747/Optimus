@@ -31,16 +31,16 @@
   </ItemGroup>
 
   <!--
-    Copy the Rust engine cdylib next to the app so DllImport("cmux_engine.dll") resolves it.
+    Copy the Rust engine cdylib next to the app so DllImport("optimus_engine.dll") resolves it.
     Built separately by `cargo build` in ..\..\engine (debug profile). The Condition keeps the
     C# build from failing if the DLL hasn't been built yet — but it must exist before running.
   -->
   <ItemGroup>
-    <_CmuxEngineDll Include="..\..\engine\target\debug\cmux_engine.dll" />
+    <_OptimusEngineDll Include="..\..\engine\target\debug\optimus_engine.dll" />
   </ItemGroup>
-  <ItemGroup Condition="Exists('@(_CmuxEngineDll)')">
-    <None Include="@(_CmuxEngineDll)">
-      <Link>cmux_engine.dll</Link>
+  <ItemGroup Condition="Exists('@(_OptimusEngineDll)')">
+    <None Include="@(_OptimusEngineDll)">
+      <Link>optimus_engine.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

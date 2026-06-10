@@ -1,16 +1,16 @@
 using System.Collections.Generic;
-using Cmux.Core;
+using Optimus.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
 using Windows.System;
 
-namespace Cmux.Splits;
+namespace Optimus.Splits;
 
 /// <summary>
 /// Wires keyboard chords to controller operations (plan Phase 2 U5). A thin adapter: it builds one
 /// <see cref="KeyboardAccelerator"/> per <see cref="ShortcutMap.Defaults"/> entry on the workspace
 /// host, and routes each invocation through the pure <see cref="ShortcutMap.Apply"/> dispatcher
-/// (the chord table and dispatch logic are unit-tested in <c>Cmux.Core</c>).
+/// (the chord table and dispatch logic are unit-tested in <c>Optimus.Core</c>).
 ///
 /// <para>Accelerators are scoped to the workspace host, so they fire even while a terminal surface
 /// holds focus and are evaluated <i>before</i> the key reaches the terminal's <c>KeyDown</c> — the

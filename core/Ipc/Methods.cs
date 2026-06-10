@@ -1,4 +1,4 @@
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Shared IPC method/verb constants for both CLI and app-side sockets.

@@ -1,11 +1,11 @@
 using System;
 using System.Globalization;
-using Cmux.Core;
+using Optimus.Core;
 using Microsoft.UI.Dispatching;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 
-namespace Cmux.Splits;
+namespace Optimus.Splits;
 
 /// <summary>
 /// Windows desktop-toast surface (plan Phase 3 U8) over the Windows App SDK
@@ -86,7 +86,7 @@ public sealed class ToastService : IDisposable
         }
         try
         {
-            string title = string.IsNullOrEmpty(n.Title) ? "cmux" : n.Title;
+            string title = string.IsNullOrEmpty(n.Title) ? "optimus" : n.Title;
             AppNotificationBuilder builder = new AppNotificationBuilder()
                 .AddArgument(SurfaceArgKey, n.SurfaceId.Value.ToString(CultureInfo.InvariantCulture))
                 .AddText(title);

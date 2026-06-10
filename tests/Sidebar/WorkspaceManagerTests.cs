@@ -1,7 +1,7 @@
 using System.Linq;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Phase 5: workspace list/selection lifecycle, the never-empty invariant, surface→workspace

@@ -3,7 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Pluggable secret protect/deprotect interface so Core can test DPAPI-style behavior without
@@ -18,12 +18,12 @@ public interface ISecretProtector
 /// <summary>
 /// Password source and verifier for the named-pipe socket.
 /// Source precedence:
-/// 1) CMUX_SOCKET_PASSWORD env var
-/// 2) DPAPI-backed file in %LOCALAPPDATA%\cmux\ (via <see cref="ISecretProtector"/>)
+/// 1) OPTIMUS_SOCKET_PASSWORD env var
+/// 2) DPAPI-backed file in %LOCALAPPDATA%\optimus\ (via <see cref="ISecretProtector"/>)
 /// </summary>
 public sealed class PasswordStore
 {
-    private const string PasswordFileName = "cmux-socket-password.bin";
+    private const string PasswordFileName = "optimus-socket-password.bin";
 
     private readonly ISecretProtector _secretProtector;
     private readonly Func<string, string?> _getEnv;
@@ -83,7 +83,7 @@ public sealed class PasswordStore
     }
 
     private string PasswordFilePath() =>
-        Path.Combine(_getLocalAppData(), "cmux", PasswordFileName);
+        Path.Combine(_getLocalAppData(), "optimus", PasswordFileName);
 
     private static bool ConstantTimeEquals(string left, string right)
     {

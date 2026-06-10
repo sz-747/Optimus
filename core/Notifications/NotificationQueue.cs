@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// One queued, not-yet-delivered notification (plan Phase 3 U4). The <see cref="Generation"/> is the

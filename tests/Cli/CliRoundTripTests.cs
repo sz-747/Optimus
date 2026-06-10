@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
-using Cmux.Cli;
+using Optimus.Cli;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Phase 4 integration seam: every frame the CLI builds must be accepted by the real

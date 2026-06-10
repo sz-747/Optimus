@@ -6,9 +6,9 @@ using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Cmux.Core;
+using Optimus.Core;
 
-namespace Cmux.Ipc;
+namespace Optimus.Ipc;
 
 /// <summary>
 /// Named-pipe server owner for the app side of the CLI socket path.
@@ -43,7 +43,7 @@ internal sealed class PipeServer
     public PipeServer(
         Func<string, CancellationToken, Task<string?>> dispatch,
         Func<string, StreamWriter, CancellationToken, Task>? eventsStream = null,
-        SocketControlMode controlMode = SocketControlMode.CmuxOnly,
+        SocketControlMode controlMode = SocketControlMode.OptimusOnly,
         string? pipeName = null,
         int maxConcurrentClients = MaxConcurrentClients,
         Func<string?, bool>? clientSidValidator = null)

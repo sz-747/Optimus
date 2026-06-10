@@ -1,7 +1,7 @@
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Coverage for <see cref="NotificationPolicy"/> (plan Phase 3 U5): the default effect set, the

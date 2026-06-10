@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// The single owner of live surfaces (KTD9): maps each <see cref="SurfaceId"/> to its

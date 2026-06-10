@@ -1,7 +1,7 @@
-using Cmux.Controls;
-using Cmux.Core;
+using Optimus.Controls;
+using Optimus.Core;
 
-namespace Cmux.Splits;
+namespace Optimus.Splits;
 
 /// <summary>
 /// The app's concrete <see cref="ISurfaceFactory"/> (Phase 2 U2): builds a real

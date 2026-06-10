@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>Modifier flags for a keyboard chord — platform-neutral so the table is unit-testable.</summary>
 [Flags]
@@ -18,13 +18,13 @@ public enum ChordModifiers
 /// A platform-neutral key chord: a modifier set plus a key code. <see cref="KeyCode"/> is the
 /// numeric Windows virtual-key value (e.g. <c>0x44</c> = 'D', <c>0x25</c> = Left) — the app casts
 /// its <c>VirtualKey</c> straight to <see cref="int"/>, and <see cref="VKey"/> documents the codes
-/// the default table uses. Kept free of WinRT types so it lives in <c>Cmux.Core</c> and is testable.
+/// the default table uses. Kept free of WinRT types so it lives in <c>Optimus.Core</c> and is testable.
 /// </summary>
 public readonly record struct KeyChord(ChordModifiers Modifiers, int KeyCode);
 
 /// <summary>
 /// The workspace actions reachable by keyboard (R8) — a faithful port of the macOS bonsplit
-/// shortcut set (cmux/Sources/KeyboardShortcutContext.swift: splitright/splitdown, focus*, newTab,
+/// shortcut set (optimus/Sources/KeyboardShortcutContext.swift: splitright/splitdown, focus*, newTab,
 /// closeTab, selectNext/Previous, equalize, zoom).
 /// </summary>
 public enum ShortcutAction
@@ -45,7 +45,7 @@ public enum ShortcutAction
 
 /// <summary>
 /// The pure chord→action table and action→controller dispatcher (plan Phase 2 U5). Living in
-/// <c>Cmux.Core</c> keeps both halves unit-testable: <see cref="Resolve"/> against the table and
+/// <c>Optimus.Core</c> keeps both halves unit-testable: <see cref="Resolve"/> against the table and
 /// <see cref="Apply"/> against a real <see cref="SplitTreeController"/>. The app's
 /// <c>ShortcutRouter</c> is a thin adapter that builds <c>KeyboardAccelerator</c>s from
 /// <see cref="Defaults"/> and routes their invocations through <see cref="Apply"/>.

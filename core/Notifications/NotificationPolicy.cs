@@ -1,6 +1,6 @@
 using System;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// What a notification should <i>do</i> (plan Phase 3 U5, R7). A <c>record</c> (class, deliberately —

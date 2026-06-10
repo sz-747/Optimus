@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Behavioral coverage for <see cref="SplitTreeController"/> (plan Phase 2 U1): tree shape after

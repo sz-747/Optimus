@@ -1,6 +1,6 @@
 using System;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Control modes that govern how the socket accepts/blocks callers.
@@ -16,7 +16,7 @@ public enum SocketControlMode
     /// <summary>
     /// Default behavior: reject unauthorized callers only through ACL / peer identity.
     /// </summary>
-    CmuxOnly,
+    OptimusOnly,
 
     /// <summary>
     /// Reserved for automation clients.
@@ -39,24 +39,24 @@ public enum SocketControlMode
 /// </summary>
 public static class SocketAccess
 {
-    public const string PasswordEnvironmentVariable = "CMUX_SOCKET_PASSWORD";
-    public const string ControlModeEnvironmentVariable = "CMUX_SOCKET_CONTROL_MODE";
+    public const string PasswordEnvironmentVariable = "OPTIMUS_SOCKET_PASSWORD";
+    public const string ControlModeEnvironmentVariable = "OPTIMUS_SOCKET_CONTROL_MODE";
 
     public static SocketControlMode ParseMode(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return SocketControlMode.CmuxOnly;
+            return SocketControlMode.OptimusOnly;
         }
 
         return value.Trim().ToLowerInvariant() switch
         {
             "off" => SocketControlMode.Off,
-            "cmuxonly" or "cmux_only" or "cmux-only" => SocketControlMode.CmuxOnly,
+            "optimusonly" or "optimus_only" or "optimus-only" => SocketControlMode.OptimusOnly,
             "automation" => SocketControlMode.Automation,
             "password" => SocketControlMode.Password,
             "allowall" or "allow_all" or "allow-all" => SocketControlMode.AllowAll,
-            _ => SocketControlMode.CmuxOnly,
+            _ => SocketControlMode.OptimusOnly,
         };
     }
 

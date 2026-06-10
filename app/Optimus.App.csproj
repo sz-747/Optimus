@@ -1,18 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    cmux for Windows — the WinUI 3 shell (plan §4 / §8 U2).
+    optimus for Windows — the WinUI 3 shell (plan §4 / §8 U2).
 
     Unpackaged + self-contained so it runs without a pre-installed Windows App SDK
-    runtime and without MSIX packaging. The Rust engine (cmux_engine.dll) is loaded
-    over a C ABI (plan §6); see the BuildCmuxEngine target below.
+    runtime and without MSIX packaging. The Rust engine (optimus_engine.dll) is loaded
+    over a C ABI (plan §6); see the BuildOptimusEngine target below.
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
-    <RootNamespace>Cmux</RootNamespace>
-    <AssemblyName>Cmux</AssemblyName>
+    <RootNamespace>Optimus</RootNamespace>
+    <AssemblyName>Optimus</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
 
     <!-- Build defaults to x64; win-arm64 is supported for `dotnet publish -r win-arm64`. -->
@@ -40,12 +40,12 @@
 
   <!-- The UI-free model heart (Phase 2 U1/KTD3): split tree, controller, surface manager. -->
   <ItemGroup>
-    <ProjectReference Include="..\core\Cmux.Core.csproj" />
+    <ProjectReference Include="..\core\Optimus.Core.csproj" />
   </ItemGroup>
 
   <!--
-    Build the Rust engine before the C# build, then stage cmux_engine.dll next to the
-    app so DllImport("cmux_engine.dll") resolves it. cargo is invoked from its known
+    Build the Rust engine before the C# build, then stage optimus_engine.dll next to the
+    app so DllImport("optimus_engine.dll") resolves it. cargo is invoked from its known
     install location (it is frequently not on PATH on dev machines); if cargo cannot be
     located the target is skipped and the build falls back to a previously-built DLL.
   -->
@@ -54,24 +54,24 @@
     <EngineProfile Condition="'$(Configuration)' == 'Release'">release</EngineProfile>
     <EngineProfile Condition="'$(EngineProfile)' == ''">debug</EngineProfile>
     <EngineCargoFlag Condition="'$(EngineProfile)' == 'release'">--release</EngineCargoFlag>
-    <EngineDll>$(EngineDir)\target\$(EngineProfile)\cmux_engine.dll</EngineDll>
+    <EngineDll>$(EngineDir)\target\$(EngineProfile)\optimus_engine.dll</EngineDll>
 
     <CargoExe Condition="'$(CargoExe)' == '' and Exists('$(USERPROFILE)\.cargo\bin\cargo.exe')">$(USERPROFILE)\.cargo\bin\cargo.exe</CargoExe>
     <CargoExe Condition="'$(CargoExe)' == ''">cargo</CargoExe>
   </PropertyGroup>
 
-  <Target Name="BuildCmuxEngine" BeforeTargets="BeforeBuild" Condition="'$(SkipCmuxEngineBuild)' != 'true'">
-    <Message Importance="high" Text="cmux: cargo build ($(EngineProfile)) in $(EngineDir)" />
+  <Target Name="BuildOptimusEngine" BeforeTargets="BeforeBuild" Condition="'$(SkipOptimusEngineBuild)' != 'true'">
+    <Message Importance="high" Text="optimus: cargo build ($(EngineProfile)) in $(EngineDir)" />
     <Exec Command="&quot;$(CargoExe)&quot; build $(EngineCargoFlag)" WorkingDirectory="$(EngineDir)" ContinueOnError="true" />
   </Target>
 
-  <Target Name="EnsureCmuxEngineDll" AfterTargets="BuildCmuxEngine" BeforeTargets="BeforeBuild">
-    <Error Condition="!Exists('$(EngineDll)')" Text="cmux_engine.dll not found at $(EngineDll). Build the engine first: run build\build.ps1, or `cargo build` in engine\ ." />
+  <Target Name="EnsureOptimusEngineDll" AfterTargets="BuildOptimusEngine" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(EngineDll)')" Text="optimus_engine.dll not found at $(EngineDll). Build the engine first: run build\build.ps1, or `cargo build` in engine\ ." />
   </Target>
 
   <ItemGroup>
     <None Include="$(EngineDll)" Condition="Exists('$(EngineDll)')">
-      <Link>cmux_engine.dll</Link>
+      <Link>optimus_engine.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

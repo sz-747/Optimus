@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>A normalized rectangle (any unit). Pure value type used for layout + navigation math.</summary>
 public readonly record struct LayoutRect(double X, double Y, double Width, double Height)

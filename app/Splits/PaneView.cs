@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using Cmux.Core;
+using Optimus.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 
-namespace Cmux.Splits;
+namespace Optimus.Splits;
 
 /// <summary>
 /// The leaf UI for one pane (plan Phase 2 U4): a <see cref="PaneTabStrip"/> above a content host
@@ -30,7 +30,7 @@ internal sealed class PaneView : UserControl
     // Focus indicator (R7): the focused pane is outlined in teal; every other pane's border is
     // transparent. The border lives on the pane's root grid so it frames the whole pane (tab strip
     // and terminal). The engine has no focus concept and draws a solid cursor in every surface, so
-    // this outline is the only cmux-level cue for which pane currently receives keystrokes. The
+    // this outline is the only optimus-level cue for which pane currently receives keystrokes. The
     // thickness is constant — only the brush toggles — so gaining/losing focus never reflows the pane.
     private const double FocusBorderThickness = 2.0;
     private static readonly SolidColorBrush FocusedBorder = new(Color.FromArgb(0xFF, 0x2D, 0xD4, 0xBF));

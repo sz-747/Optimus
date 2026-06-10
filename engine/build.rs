@@ -22,8 +22,8 @@ fn main() {
     let result = csbindgen::Builder::default()
         .input_extern_file("src/lib.rs")
         .input_extern_file("src/ffi/events.rs")
-        .csharp_dll_name("cmux_engine")
-        .csharp_namespace("Cmux.Interop")
+        .csharp_dll_name("optimus_engine")
+        .csharp_namespace("Optimus.Interop")
         .csharp_class_name("NativeMethods")
         .csharp_class_accessibility("internal")
         // Entry points are `extern "C"` (cdecl) — match it explicitly on the C# side.

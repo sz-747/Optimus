@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.UI.Dispatching;
 
-namespace Cmux.Interop;
+namespace Optimus.Interop;
 
 /// <summary>
 /// The opaque native engine type. The C# side never dereferences this — it only holds and
@@ -17,7 +17,7 @@ internal readonly struct Engine
 {
 }
 
-/// <summary>Keyboard modifier bitmask handed to <c>cmux_engine_send_key</c> (plan §6).</summary>
+/// <summary>Keyboard modifier bitmask handed to <c>optimus_engine_send_key</c> (plan §6).</summary>
 [Flags]
 internal enum KeyModifiers : uint
 {
@@ -78,10 +78,10 @@ internal sealed unsafe class EngineHandle : IDisposable
     /// <exception cref="EngineException">The native create failed.</exception>
     public static EngineHandle Create(EngineOptions options)
     {
-        Engine* engine = NativeMethods.cmux_engine_create(&options);
+        Engine* engine = NativeMethods.optimus_engine_create(&options);
         if (engine == null)
         {
-            throw new EngineException("cmux_engine_create returned null: " + LastError());
+            throw new EngineException("optimus_engine_create returned null: " + LastError());
         }
         return new EngineHandle(engine);
     }
@@ -105,7 +105,7 @@ internal sealed unsafe class EngineHandle : IDisposable
             _selfHandle = GCHandle.Alloc(this);
         }
         delegate* unmanaged[Cdecl]<void*, HostEvent*, void> cb = &OnNativeEvent;
-        NativeMethods.cmux_engine_set_event_callback(_engine, cb, (void*)GCHandle.ToIntPtr(_selfHandle));
+        NativeMethods.optimus_engine_set_event_callback(_engine, cb, (void*)GCHandle.ToIntPtr(_selfHandle));
     }
 
     /// <summary>
@@ -115,10 +115,10 @@ internal sealed unsafe class EngineHandle : IDisposable
     public void AttachSwapChainPanel(IntPtr panelNative)
     {
         ThrowIfDisposed();
-        int rc = NativeMethods.cmux_engine_attach_swapchain_panel(_engine, (void*)panelNative);
+        int rc = NativeMethods.optimus_engine_attach_swapchain_panel(_engine, (void*)panelNative);
         if (rc < 0)
         {
-            throw new EngineException("cmux_engine_attach_swapchain_panel failed: " + LastError());
+            throw new EngineException("optimus_engine_attach_swapchain_panel failed: " + LastError());
         }
     }
 
@@ -126,7 +126,7 @@ internal sealed unsafe class EngineHandle : IDisposable
     public void Detach()
     {
         ThrowIfDisposed();
-        NativeMethods.cmux_engine_detach(_engine);
+        NativeMethods.optimus_engine_detach(_engine);
     }
 
     /// <summary>Spawn the shell. <paramref name="cwd"/> null/empty → inherit the parent's cwd.</summary>
@@ -139,10 +139,10 @@ internal sealed unsafe class EngineHandle : IDisposable
         fixed (byte* pd = dir)
         {
             // `fixed` on an empty array yields a null pointer; Rust's str_arg treats (null, 0) as "".
-            int rc = NativeMethods.cmux_engine_spawn_shell(_engine, pc, (nuint)cmd.Length, pd, (nuint)dir.Length);
+            int rc = NativeMethods.optimus_engine_spawn_shell(_engine, pc, (nuint)cmd.Length, pd, (nuint)dir.Length);
             if (rc < 0)
             {
-                throw new EngineException("cmux_engine_spawn_shell failed: " + LastError());
+                throw new EngineException("optimus_engine_spawn_shell failed: " + LastError());
             }
         }
     }
@@ -154,7 +154,7 @@ internal sealed unsafe class EngineHandle : IDisposable
         byte[] bytes = Encoding.UTF8.GetBytes(text);
         fixed (byte* p = bytes)
         {
-            NativeMethods.cmux_engine_send_text(_engine, p, (nuint)bytes.Length);
+            NativeMethods.optimus_engine_send_text(_engine, p, (nuint)bytes.Length);
         }
     }
 
@@ -162,31 +162,31 @@ internal sealed unsafe class EngineHandle : IDisposable
     public void SendKey(uint virtualKey, KeyModifiers modifiers, bool down)
     {
         ThrowIfDisposed();
-        NativeMethods.cmux_engine_send_key(_engine, virtualKey, (uint)modifiers, down);
+        NativeMethods.optimus_engine_send_key(_engine, virtualKey, (uint)modifiers, down);
     }
 
     /// <summary>Forward a mouse event in physical pixels relative to the panel.</summary>
     public void SendMouse(float x, float y, uint button, uint kind, KeyModifiers modifiers)
     {
         ThrowIfDisposed();
-        NativeMethods.cmux_engine_send_mouse(_engine, x, y, button, kind, (uint)modifiers);
+        NativeMethods.optimus_engine_send_mouse(_engine, x, y, button, kind, (uint)modifiers);
     }
 
     /// <summary>Forward a scroll event (<paramref name="deltaLines"/>: +up / -down).</summary>
     public void SendScroll(float deltaLines)
     {
         ThrowIfDisposed();
-        NativeMethods.cmux_engine_send_scroll(_engine, deltaLines);
+        NativeMethods.optimus_engine_send_scroll(_engine, deltaLines);
     }
 
     /// <summary>Resize the grid, GPU surface, and pseudoconsole together.</summary>
     public void Resize(ushort cols, ushort rows, uint pixelWidth, uint pixelHeight, float dpiScale)
     {
         ThrowIfDisposed();
-        int rc = NativeMethods.cmux_engine_resize(_engine, cols, rows, pixelWidth, pixelHeight, dpiScale);
+        int rc = NativeMethods.optimus_engine_resize(_engine, cols, rows, pixelWidth, pixelHeight, dpiScale);
         if (rc < 0)
         {
-            throw new EngineException("cmux_engine_resize failed: " + LastError());
+            throw new EngineException("optimus_engine_resize failed: " + LastError());
         }
     }
 
@@ -195,10 +195,10 @@ internal sealed unsafe class EngineHandle : IDisposable
     {
         ThrowIfDisposed();
         ByteBuffer buf;
-        int rc = NativeMethods.cmux_engine_selection_text(_engine, &buf);
+        int rc = NativeMethods.optimus_engine_selection_text(_engine, &buf);
         if (rc < 0)
         {
-            throw new EngineException("cmux_engine_selection_text failed: " + LastError());
+            throw new EngineException("optimus_engine_selection_text failed: " + LastError());
         }
         try
         {
@@ -206,7 +206,7 @@ internal sealed unsafe class EngineHandle : IDisposable
         }
         finally
         {
-            NativeMethods.cmux_buffer_free(buf);
+            NativeMethods.optimus_buffer_free(buf);
         }
     }
 
@@ -214,7 +214,7 @@ internal sealed unsafe class EngineHandle : IDisposable
     public static string LastError()
     {
         ByteBuffer buf;
-        int rc = NativeMethods.cmux_last_error_message(&buf);
+        int rc = NativeMethods.optimus_last_error_message(&buf);
         if (rc != 0)
         {
             return rc == 1 ? string.Empty : "(failed to read last error)";
@@ -225,7 +225,7 @@ internal sealed unsafe class EngineHandle : IDisposable
         }
         finally
         {
-            NativeMethods.cmux_buffer_free(buf);
+            NativeMethods.optimus_buffer_free(buf);
         }
     }
 
@@ -235,7 +235,7 @@ internal sealed unsafe class EngineHandle : IDisposable
         // THEN release the GCHandle that rooted us as the callback's user_data.
         if (_engine != null)
         {
-            NativeMethods.cmux_engine_destroy(_engine);
+            NativeMethods.optimus_engine_destroy(_engine);
             _engine = null;
         }
         if (_selfHandle.IsAllocated)

@@ -1,6 +1,6 @@
 using System;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// A live terminal surface as the model plane sees it (KTD3): an id plus the three lifecycle

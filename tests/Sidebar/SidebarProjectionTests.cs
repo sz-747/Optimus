@@ -3,7 +3,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Phase 5 U3: the sidebar row projection. The first test pins the issue-#2586 discipline — rows

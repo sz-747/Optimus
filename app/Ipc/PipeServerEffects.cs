@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Cmux.Core;
-using Cmux.Sidebar;
+using Optimus.Core;
+using Optimus.Sidebar;
 using Microsoft.UI.Dispatching;
 
-namespace Cmux.Ipc;
+namespace Optimus.Ipc;
 
 internal sealed class PipeServerEffects : ISocketEffects
 {

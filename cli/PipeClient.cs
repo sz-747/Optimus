@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
-using Cmux.Core;
+using Optimus.Core;
 
-namespace Cmux.Cli;
+namespace Optimus.Cli;
 
 /// <summary>
 /// Thin named-pipe client for one-shot CLI requests: connect, write newline-framed lines,

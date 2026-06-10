@@ -6,7 +6,7 @@
 
 use std::ffi::c_void;
 
-/// Options passed to [`crate::cmux_engine_create`]. A null pointer selects the defaults.
+/// Options passed to [`crate::optimus_engine_create`]. A null pointer selects the defaults.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct EngineOptions {
@@ -55,7 +55,7 @@ impl EngineOptions {
 /// An owned byte buffer handed across FFI (e.g. selection text, error messages).
 ///
 /// Allocated by Rust; the C# side copies the bytes immediately and then calls
-/// [`crate::cmux_buffer_free`]. Each side frees only its own allocations (plan §6).
+/// [`crate::optimus_buffer_free`]. Each side frees only its own allocations (plan §6).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ByteBuffer {
@@ -65,7 +65,7 @@ pub struct ByteBuffer {
 }
 
 impl ByteBuffer {
-    /// An empty buffer (null ptr, zero len/cap). Safe to `cmux_buffer_free`.
+    /// An empty buffer (null ptr, zero len/cap). Safe to `optimus_buffer_free`.
     pub const EMPTY: ByteBuffer = ByteBuffer {
         ptr: std::ptr::null_mut(),
         len: 0,

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Identity of a workspace — one sidebar row, owning one split tree of tabbed terminal panes.

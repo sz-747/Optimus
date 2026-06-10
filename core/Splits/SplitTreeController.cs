@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// The mutable controller over an immutable split tree (KTD3). Holds the current root plus the
 /// focused pane, exposes the split/tab/divider/focus operations (a port of the macOS bonsplit
-/// controller — cmux/Sources/Workspace.swift), and emits value-type <see cref="TreeSnapshot"/>s.
+/// controller — optimus/Sources/Workspace.swift), and emits value-type <see cref="TreeSnapshot"/>s.
 ///
 /// <para><b>Derived focus (R7):</b> the focused <i>surface</i> is never stored — it is always
 /// <c>SelectedTab(FocusedPane)</c>. Changing the selected tab changes the focused surface.</para>

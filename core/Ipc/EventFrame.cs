@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Shared event frame shapes for events.stream.

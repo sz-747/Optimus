@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 public sealed class SocketDiscoveryTests
 {
@@ -25,7 +25,7 @@ public sealed class SocketDiscoveryTests
     [Fact] // Covers R4.
     public void BuildPipeName_uses_stable_by_default()
     {
-        Assert.Equal(@"\\.\pipe\cmux-stable", PipeName.BuildPipeName(string.Empty));
+        Assert.Equal(@"\\.\pipe\optimus-stable", PipeName.BuildPipeName(string.Empty));
     }
 
     [Fact] // Covers R4.
@@ -36,8 +36,8 @@ public sealed class SocketDiscoveryTests
             explicitVariant: "nightly",
             slug: "beta");
 
-        Assert.Equal(@"\\.\pipe\cmux-nightly-beta", list[0]);
-        Assert.Equal(@"\\.\pipe\cmux-stable-beta", list[1]);
+        Assert.Equal(@"\\.\pipe\optimus-nightly-beta", list[0]);
+        Assert.Equal(@"\\.\pipe\optimus-stable-beta", list[1]);
     }
 
     [Fact] // Covers R4.

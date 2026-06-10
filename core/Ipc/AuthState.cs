@@ -1,4 +1,4 @@
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Auth state forwarded into <see cref="CommandRouter.Dispatch"/> so password-mode policies can be

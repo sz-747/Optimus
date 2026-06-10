@@ -9,7 +9,7 @@
 //!      registered it. The C# side relies on this — it must `DispatcherQueue.TryEnqueue` back
 //!      to the UI thread — so the test asserts the callback genuinely runs off the registering
 //!      thread and can safely read its `user_data` from there.
-//!   2. `cmux_engine_destroy` performs **ordered teardown** (stop the render thread → join the
+//!   2. `optimus_engine_destroy` performs **ordered teardown** (stop the render thread → join the
 //!      reader → drop the PTY). No callback may run after destroy returns, so the `user_data`
 //!      the host frees afterwards is never touched by a straggler worker.
 //!   3. Rapid create/destroy churn — including destroying while a child + reader thread are
@@ -36,15 +36,15 @@ use std::sync::Arc;
 use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
-use cmux_engine::event_kind;
-use cmux_engine::ffi::events::HostEvent;
-use cmux_engine::{
-    cmux_engine_create, cmux_engine_destroy, cmux_engine_resize, cmux_engine_send_text,
-    cmux_engine_set_event_callback, cmux_engine_spawn_shell,
+use optimus_engine::event_kind;
+use optimus_engine::ffi::events::HostEvent;
+use optimus_engine::{
+    optimus_engine_create, optimus_engine_destroy, optimus_engine_resize, optimus_engine_send_text,
+    optimus_engine_set_event_callback, optimus_engine_spawn_shell,
 };
 
 /// Shared, `Sync` state the C-ABI callback writes into via its opaque `user_data` token.
-/// The host (this test) owns it behind an `Arc` and keeps it alive past `cmux_engine_destroy`,
+/// The host (this test) owns it behind an `Arc` and keeps it alive past `optimus_engine_destroy`,
 /// mirroring the C# contract that the `GCHandle` stays rooted for the engine's lifetime.
 struct Counters {
     /// Total callbacks observed (any kind).
@@ -80,7 +80,7 @@ extern "C" fn on_event(user_data: *mut c_void, ev: *const HostEvent) {
         return;
     }
     // SAFETY: `user_data` is the `Arc<Counters>` pointer registered below; the test keeps the
-    // Arc alive until after `cmux_engine_destroy`, so it is valid for every callback.
+    // Arc alive until after `optimus_engine_destroy`, so it is valid for every callback.
     let counters = unsafe { &*(user_data as *const Counters) };
     // SAFETY: the event pointer is valid for the duration of this call (the engine owns the
     // backing storage and only borrows it to us). We read scalars/flags; we copy nothing.
@@ -110,23 +110,23 @@ fn wait_until(timeout: Duration, mut pred: impl FnMut() -> bool) -> bool {
 }
 
 /// Register `counters` as the callback target on `engine`. The Arc must stay alive past destroy.
-fn register(engine: *mut cmux_engine::engine::Engine, counters: &Arc<Counters>) {
+fn register(engine: *mut optimus_engine::engine::Engine, counters: &Arc<Counters>) {
     let user_data = Arc::as_ptr(counters) as *mut c_void;
     // SAFETY: `engine` is a live handle; `on_event` is a valid C-ABI fn; `user_data` stays
     // valid for the engine's lifetime because the caller holds the Arc.
-    unsafe { cmux_engine_set_event_callback(engine, on_event, user_data) };
+    unsafe { optimus_engine_set_event_callback(engine, on_event, user_data) };
 }
 
 /// Spawn `cmd.exe` echoing a raw `ESC ] 0 ; <marker> BEL` OSC set-title sequence, which
 /// propagates through ConPTY → `wezterm-term` → `AlertHandler` as a `TITLE` event on the
 /// render thread. Panics if the spawn fails.
-fn spawn_title_emitter(engine: *mut cmux_engine::engine::Engine, marker: &str) {
+fn spawn_title_emitter(engine: *mut optimus_engine::engine::Engine, marker: &str) {
     let esc = '\u{1b}';
     let bel = '\u{7}';
     let cmdline = format!("cmd.exe /c echo {esc}]0;{marker}{bel}");
     // SAFETY: `engine` live; `cmdline` is valid UTF-8 for its length; cwd is null/0 (inherit).
     let rc = unsafe {
-        cmux_engine_spawn_shell(
+        optimus_engine_spawn_shell(
             engine,
             cmdline.as_ptr(),
             cmdline.len(),
@@ -138,20 +138,20 @@ fn spawn_title_emitter(engine: *mut cmux_engine::engine::Engine, marker: &str) {
 }
 
 /// Full happy-path round trip over the C ABI: the callback must fire from a worker thread with
-/// a `TITLE` event, and no callback may run after `cmux_engine_destroy`.
+/// a `TITLE` event, and no callback may run after `optimus_engine_destroy`.
 #[test]
 fn callback_fires_from_worker_thread_and_teardown_is_clean() {
     let counters = Counters::new(thread::current().id());
 
     // SAFETY: null opts → defaults; returned handle is freed once via destroy below.
-    let engine = unsafe { cmux_engine_create(std::ptr::null()) };
+    let engine = unsafe { optimus_engine_create(std::ptr::null()) };
     assert!(!engine.is_null(), "engine create returned null");
 
     register(engine, &counters);
 
     // Grid dims via the cols/rows path (no surface) — mirrors the U4 test's headless resize.
     // SAFETY: live engine.
-    let rc = unsafe { cmux_engine_resize(engine, 80, 24, 0, 0, 1.0) };
+    let rc = unsafe { optimus_engine_resize(engine, 80, 24, 0, 0, 1.0) };
     assert_eq!(rc, 0, "resize returned {rc}");
 
     spawn_title_emitter(engine, "spike5_title");
@@ -170,7 +170,7 @@ fn callback_fires_from_worker_thread_and_teardown_is_clean() {
     // then confirm no straggler callback bumped it after the threads were joined.
     let before = counters.events.load(Ordering::SeqCst);
     // SAFETY: a live handle, destroyed exactly once.
-    unsafe { cmux_engine_destroy(engine) };
+    unsafe { optimus_engine_destroy(engine) };
     thread::sleep(Duration::from_millis(100));
     let after = counters.events.load(Ordering::SeqCst);
     assert_eq!(
@@ -189,23 +189,23 @@ fn rapid_create_destroy_churn_is_safe() {
     for i in 0..16 {
         let counters = Counters::new(thread::current().id());
         // SAFETY: null opts → defaults; freed once below.
-        let engine = unsafe { cmux_engine_create(std::ptr::null()) };
+        let engine = unsafe { optimus_engine_create(std::ptr::null()) };
         assert!(!engine.is_null(), "create returned null on iteration {i}");
 
         register(engine, &counters);
         // SAFETY: live engine.
-        unsafe { cmux_engine_resize(engine, 40, 12, 0, 0, 1.0) };
+        unsafe { optimus_engine_resize(engine, 40, 12, 0, 0, 1.0) };
 
         // Sending text before a shell exists must be a harmless no-op (no PTY yet).
         let text = "noop";
         // SAFETY: live engine; valid UTF-8 ptr+len.
-        unsafe { cmux_engine_send_text(engine, text.as_ptr(), text.len()) };
+        unsafe { optimus_engine_send_text(engine, text.as_ptr(), text.len()) };
 
         spawn_title_emitter(engine, "churn");
         // Deliberately do NOT wait: destroy races the live reader/child to stress the shutdown
         // ordering (close pseudoconsole → join reader → drop terminal).
         // SAFETY: live handle, destroyed once.
-        unsafe { cmux_engine_destroy(engine) };
+        unsafe { optimus_engine_destroy(engine) };
         drop(counters);
     }
 }
@@ -222,12 +222,12 @@ fn concurrent_independent_engines_dont_interfere() {
             thread::spawn(move || {
                 let counters = Counters::new(thread::current().id());
                 // SAFETY: null opts → defaults; freed once below.
-                let engine = unsafe { cmux_engine_create(std::ptr::null()) };
+                let engine = unsafe { optimus_engine_create(std::ptr::null()) };
                 assert!(!engine.is_null(), "engine {n} create returned null");
 
                 register(engine, &counters);
                 // SAFETY: live engine.
-                unsafe { cmux_engine_resize(engine, 80, 24, 0, 0, 1.0) };
+                unsafe { optimus_engine_resize(engine, 80, 24, 0, 0, 1.0) };
 
                 spawn_title_emitter(engine, &format!("engine_{n}"));
 
@@ -240,7 +240,7 @@ fn concurrent_independent_engines_dont_interfere() {
                 );
 
                 // SAFETY: live handle, destroyed once.
-                unsafe { cmux_engine_destroy(engine) };
+                unsafe { optimus_engine_destroy(engine) };
                 drop(counters);
             })
         })

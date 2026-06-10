@@ -80,7 +80,7 @@ enum RenderCmd {
 /// Owns the terminal core, PTY, renderer, and worker threads for one terminal surface.
 ///
 /// Opaque to C#: created with [`Engine::new`] (boxed into `*mut Engine` by the FFI layer)
-/// and torn down on `cmux_engine_destroy`, which drops this and joins the render thread.
+/// and torn down on `optimus_engine_destroy`, which drops this and joins the render thread.
 pub struct Engine {
     options: EngineOptions,
     tx: Sender<RenderCmd>,
@@ -98,7 +98,7 @@ impl Engine {
         let render_sink = Arc::clone(&sink);
         let render_tx = tx.clone();
         let render_thread = std::thread::Builder::new()
-            .name("cmux-render".into())
+            .name("optimus-render".into())
             .spawn(move || render_loop(options, rx, render_tx, render_sink))
             .expect("spawn render thread");
 
@@ -324,7 +324,7 @@ fn order_points(a: (i64, usize), b: (i64, usize)) -> ((i64, usize), (i64, usize)
 /// (e.g. a wgpu surface error while a window crosses monitors / changes DPI) cannot tear down
 /// the render thread and orphan a pending reply channel — which the C# host would otherwise see
 /// as "render thread gone" and rethrow as a fatal unhandled exception. The panic location is
-/// recorded to `cmux_engine.log` by the installed hook; the thread keeps running so a transient
+/// recorded to `optimus_engine.log` by the installed hook; the thread keeps running so a transient
 /// fault recovers on the next frame and a persistent one merely leaves the panel blank.
 fn render_loop(
     options: EngineOptions,
@@ -379,7 +379,7 @@ fn render_loop(
 }
 
 /// Install (once, process-wide) a panic hook that appends the panic location + message to
-/// `cmux_engine.log`. The render thread's [`crate::ffi::set_last_error`] is thread-local and so
+/// `optimus_engine.log`. The render thread's [`crate::ffi::set_last_error`] is thread-local and so
 /// can't reach the C# host (which reads it from the UI thread), so this file is the only durable
 /// record of *why* a render-thread panic happened. The previous hook's behavior is preserved.
 fn install_render_panic_logger() {
@@ -403,7 +403,7 @@ fn install_render_panic_logger() {
     });
 }
 
-/// Best-effort append of a diagnostic line to `cmux_engine.log` (next to the running executable,
+/// Best-effort append of a diagnostic line to `optimus_engine.log` (next to the running executable,
 /// falling back to the system temp dir). Used for events that must survive the thread/FFI
 /// boundary, where the thread-local last-error channel can't reach the host.
 fn append_engine_log(line: &str) {
@@ -418,8 +418,8 @@ fn append_engine_log(line: &str) {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
     let candidates = [
-        exe_dir.map(|d| d.join("cmux_engine.log")),
-        Some(std::env::temp_dir().join("cmux_engine.log")),
+        exe_dir.map(|d| d.join("optimus_engine.log")),
+        Some(std::env::temp_dir().join("optimus_engine.log")),
     ];
     for path in candidates.into_iter().flatten() {
         if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -434,10 +434,10 @@ fn append_engine_log(line: &str) {
 }
 
 /// Record that the render thread trapped a panic. The hook has already logged the location +
-/// message to `cmux_engine.log`; we keep the renderer (a transient GPU fault recovers next frame)
+/// message to `optimus_engine.log`; we keep the renderer (a transient GPU fault recovers next frame)
 /// and leave a breadcrumb on this thread's last-error channel.
 fn note_render_panic() {
-    crate::ffi::set_last_error("render thread trapped a panic (see cmux_engine.log next to the exe)");
+    crate::ffi::set_last_error("render thread trapped a panic (see optimus_engine.log next to the exe)");
 }
 
 impl RenderState {
@@ -608,7 +608,7 @@ impl RenderState {
         let mut reader = pty.output_reader();
         let tx = self.self_tx.clone();
         let handle = std::thread::Builder::new()
-            .name("cmux-pty-reader".into())
+            .name("optimus-pty-reader".into())
             .spawn(move || {
                 let mut buf = [0u8; 8192];
                 loop {
@@ -856,7 +856,7 @@ fn dump_screen(terminal: &Terminal) -> String {
 /// Map a Windows virtual-key code + modifier bitmask to a `wezterm-term` key.
 ///
 /// Returns `None` for plain printable keys (no Ctrl/Alt) — those arrive as resolved text via
-/// `cmux_engine_send_text` (`CharacterReceived`), so encoding them here would double-type.
+/// `optimus_engine_send_text` (`CharacterReceived`), so encoding them here would double-type.
 fn map_key(vk: u32, modifiers: u32) -> Option<(KeyCode, Modifiers)> {
     let mods = map_modifiers(modifiers);
 

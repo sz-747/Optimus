@@ -13,7 +13,7 @@
 
 use std::ffi::c_void;
 
-/// Spike 1 C ABI (`cmux_spike_*`) that lets the WinUI 3 host drive this renderer.
+/// Spike 1 C ABI (`optimus_spike_*`) that lets the WinUI 3 host drive this renderer.
 pub mod panel_ffi;
 
 /// Instanced solid-color quads (cell backgrounds, cursor, selection) — plan §8 U6.
@@ -81,7 +81,7 @@ impl PanelRenderer {
 
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                label: Some("cmux-engine device"),
+                label: Some("optimus-engine device"),
                 required_features: wgpu::Features::empty(),
                 // Use the adapter's real limits, not downlevel_defaults(): the latter caps
                 // max_texture_dimension_2d at 2048, which makes Surface::configure panic for any
@@ -251,11 +251,11 @@ impl PanelRenderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("cmux-engine clear encoder"),
+                label: Some("optimus-engine clear encoder"),
             });
         {
             let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("cmux-engine clear pass"),
+                label: Some("optimus-engine clear pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,

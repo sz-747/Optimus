@@ -8,11 +8,11 @@ using System;
 using System.Runtime.InteropServices;
 
 
-namespace Cmux.Interop
+namespace Optimus.Interop
 {
     internal static unsafe partial class NativeMethods
     {
-        const string __DllName = "cmux_engine";
+        const string __DllName = "optimus_engine";
 
 
 
@@ -20,23 +20,23 @@ namespace Cmux.Interop
 
         /// <summary>
         ///  Create an engine. `opts` may be null (selects defaults). Returns an opaque handle, or
-        ///  null on failure (see `cmux_last_error_message`).
+        ///  null on failure (see `optimus_last_error_message`).
         ///
         ///  # Safety
         ///  `opts`, if non-null, must point to a valid [`EngineOptions`]. The returned handle must
-        ///  be freed exactly once with [`cmux_engine_destroy`].
+        ///  be freed exactly once with [`optimus_engine_destroy`].
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_create", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern Engine* cmux_engine_create(EngineOptions* opts);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_create", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern Engine* optimus_engine_create(EngineOptions* opts);
 
         /// <summary>
         ///  Destroy an engine handle (stops threads, drops the PTY + GPU resources). Null-safe.
         ///
         ///  # Safety
-        ///  `engine` must be a handle from [`cmux_engine_create`] not already destroyed.
+        ///  `engine` must be a handle from [`optimus_engine_create`] not already destroyed.
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_destroy", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void cmux_engine_destroy(Engine* engine);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_destroy", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void optimus_engine_destroy(Engine* engine);
 
         /// <summary>
         ///  Bind the wgpu renderer to the WinUI 3 `SwapChainPanel` whose native `ISwapChainPanel*`
@@ -45,17 +45,17 @@ namespace Cmux.Interop
         ///  # Safety
         ///  `engine` must be a live handle; `panel` a valid, live `ISwapChainPanel*`.
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_attach_swapchain_panel", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern int cmux_engine_attach_swapchain_panel(Engine* engine, void* panel);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_attach_swapchain_panel", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int optimus_engine_attach_swapchain_panel(Engine* engine, void* panel);
 
         /// <summary>
         ///  Detach the renderer surface (panel going away). Null-safe.
         ///
         ///  # Safety
-        ///  `engine` must be a live handle from [`cmux_engine_create`].
+        ///  `engine` must be a live handle from [`optimus_engine_create`].
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_detach", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void cmux_engine_detach(Engine* engine);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_detach", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void optimus_engine_detach(Engine* engine);
 
         /// <summary>
         ///  Spawn the shell. `cmdline`/`cwd` are UTF-8 `ptr + len` (cwd may be empty → inherit).
@@ -64,8 +64,8 @@ namespace Cmux.Interop
         ///  # Safety
         ///  `engine` live; `cmdline_utf8`/`cwd_utf8` valid for their lengths (or null when len 0).
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_spawn_shell", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern int cmux_engine_spawn_shell(Engine* engine, byte* cmdline_utf8, nuint cmdline_len, byte* cwd_utf8, nuint cwd_len);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_spawn_shell", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int optimus_engine_spawn_shell(Engine* engine, byte* cmdline_utf8, nuint cmdline_len, byte* cwd_utf8, nuint cwd_len);
 
         /// <summary>
         ///  Send already-resolved text (layout/IME/paste) to the shell. UTF-8 `ptr + len`.
@@ -73,57 +73,57 @@ namespace Cmux.Interop
         ///  # Safety
         ///  `engine` live; `utf8` valid for `len` bytes (or null when `len == 0`).
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_send_text", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void cmux_engine_send_text(Engine* engine, byte* utf8, nuint len);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_send_text", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void optimus_engine_send_text(Engine* engine, byte* utf8, nuint len);
 
         /// <summary>
         ///  Send a key event. `vk` is a Windows virtual-key code; `modifiers` is a bitmask
         ///  (see the C# `KeyModifiers`); `down` is press vs release.
         ///
         ///  # Safety
-        ///  `engine` must be a live handle from [`cmux_engine_create`].
+        ///  `engine` must be a live handle from [`optimus_engine_create`].
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_send_key", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void cmux_engine_send_key(Engine* engine, uint vk, uint modifiers, [MarshalAs(UnmanagedType.U1)] bool down);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_send_key", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void optimus_engine_send_key(Engine* engine, uint vk, uint modifiers, [MarshalAs(UnmanagedType.U1)] bool down);
 
         /// <summary>
         ///  Send a mouse event in physical pixels relative to the panel. `button`/`kind`/`modifiers`
         ///  are enums mirrored on the C# side.
         ///
         ///  # Safety
-        ///  `engine` must be a live handle from [`cmux_engine_create`].
+        ///  `engine` must be a live handle from [`optimus_engine_create`].
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_send_mouse", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void cmux_engine_send_mouse(Engine* engine, float x, float y, uint button, uint kind, uint modifiers);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_send_mouse", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void optimus_engine_send_mouse(Engine* engine, float x, float y, uint button, uint kind, uint modifiers);
 
         /// <summary>
         ///  Send a scroll event (`delta_lines`: +up / -down).
         ///
         ///  # Safety
-        ///  `engine` must be a live handle from [`cmux_engine_create`].
+        ///  `engine` must be a live handle from [`optimus_engine_create`].
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_send_scroll", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void cmux_engine_send_scroll(Engine* engine, float delta_lines);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_send_scroll", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void optimus_engine_send_scroll(Engine* engine, float delta_lines);
 
         /// <summary>
         ///  Resize the grid, GPU surface, and pseudoconsole together. Returns `0` / `&lt;0`.
         ///
         ///  # Safety
-        ///  `engine` must be a live handle from [`cmux_engine_create`].
+        ///  `engine` must be a live handle from [`optimus_engine_create`].
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_resize", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern int cmux_engine_resize(Engine* engine, ushort cols, ushort rows, uint pixel_width, uint pixel_height, float dpi_scale);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_resize", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int optimus_engine_resize(Engine* engine, ushort cols, ushort rows, uint pixel_width, uint pixel_height, float dpi_scale);
 
         /// <summary>
         ///  Write the current selection (UTF-8) into `*out`. Returns `0` if there is a selection,
         ///  `1` if there is none (and `*out` is set to an empty buffer), `&lt;0` on error. Free `*out`
-        ///  with [`cmux_buffer_free`].
+        ///  with [`optimus_buffer_free`].
         ///
         ///  # Safety
         ///  `engine` live; `out` a valid writable `*mut ByteBuffer`.
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_selection_text", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern int cmux_engine_selection_text(Engine* engine, ByteBuffer* @out);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_selection_text", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int optimus_engine_selection_text(Engine* engine, ByteBuffer* @out);
 
         /// <summary>
         ///  Free a [`ByteBuffer`] produced by this library. Null/empty-safe.
@@ -131,8 +131,8 @@ namespace Cmux.Interop
         ///  # Safety
         ///  `buf` must be a buffer returned by this library and not already freed.
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_buffer_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void cmux_buffer_free(ByteBuffer buf);
+        [DllImport(__DllName, EntryPoint = "optimus_buffer_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void optimus_buffer_free(ByteBuffer buf);
 
         /// <summary>
         ///  Register the host-event callback. `cb` is invoked from the engine's worker threads with
@@ -143,25 +143,25 @@ namespace Cmux.Interop
         ///  `engine` live; `cb` a valid C-ABI function pointer; `user_data` valid for the engine's
         ///  lifetime.
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_engine_set_event_callback", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern void cmux_engine_set_event_callback(Engine* engine, delegate* unmanaged[Cdecl]<void*, HostEvent*, void> cb, void* user_data);
+        [DllImport(__DllName, EntryPoint = "optimus_engine_set_event_callback", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern void optimus_engine_set_event_callback(Engine* engine, delegate* unmanaged[Cdecl]<void*, HostEvent*, void> cb, void* user_data);
 
         /// <summary>
         ///  Write the calling thread's last error message (UTF-8) into `*out`. Returns `0` if a
         ///  message was available, `1` if none (empty buffer written), `&lt;0` on error. Clears the
-        ///  stored error. Free `*out` with [`cmux_buffer_free`].
+        ///  stored error. Free `*out` with [`optimus_buffer_free`].
         ///
         ///  # Safety
         ///  `out` must be a valid writable `*mut ByteBuffer`.
         /// </summary>
-        [DllImport(__DllName, EntryPoint = "cmux_last_error_message", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern int cmux_last_error_message(ByteBuffer* @out);
+        [DllImport(__DllName, EntryPoint = "optimus_last_error_message", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int optimus_last_error_message(ByteBuffer* @out);
 
 
     }
 
     /// <summary>
-    ///  Options passed to [`crate::cmux_engine_create`]. A null pointer selects the defaults.
+    ///  Options passed to [`crate::optimus_engine_create`]. A null pointer selects the defaults.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct EngineOptions
@@ -184,7 +184,7 @@ namespace Cmux.Interop
     ///  An owned byte buffer handed across FFI (e.g. selection text, error messages).
     ///
     ///  Allocated by Rust; the C# side copies the bytes immediately and then calls
-    ///  [`crate::cmux_buffer_free`]. Each side frees only its own allocations (plan §6).
+    ///  [`crate::optimus_buffer_free`]. Each side frees only its own allocations (plan §6).
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe partial struct ByteBuffer

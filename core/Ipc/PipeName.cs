@@ -1,14 +1,14 @@
 using System;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// Socket pipe naming helpers shared between CLI and app.
 /// </summary>
 public static class PipeName
 {
-    public const string SocketPathEnv = "CMUX_SOCKET_PATH";
-    public const string SocketEnv = "CMUX_SOCKET";
+    public const string SocketPathEnv = "OPTIMUS_SOCKET_PATH";
+    public const string SocketEnv = "OPTIMUS_SOCKET";
 
     private const string LocalPipePrefix = @"\\.\pipe\";
 
@@ -16,7 +16,7 @@ public static class PipeName
     {
         string normalizedVariant = NormalizeVariant(variant);
         string suffix = string.IsNullOrWhiteSpace(slug) ? string.Empty : $"-{slug}";
-        return $@"\\.\pipe\cmux-{normalizedVariant}{suffix}";
+        return $@"\\.\pipe\optimus-{normalizedVariant}{suffix}";
     }
 
     /// <summary>

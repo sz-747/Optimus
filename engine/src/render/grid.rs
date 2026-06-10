@@ -86,12 +86,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 impl QuadLayer {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cmux quad shader"),
+            label: Some("optimus quad shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
 
         let globals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cmux quad globals"),
+            label: Some("optimus quad globals"),
             contents: bytemuck::bytes_of(&Globals {
                 resolution: [width.max(1) as f32, height.max(1) as f32],
                 _pad: [0.0, 0.0],
@@ -100,7 +100,7 @@ impl QuadLayer {
         });
 
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("cmux quad globals layout"),
+            label: Some("optimus quad globals layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
@@ -114,7 +114,7 @@ impl QuadLayer {
         });
 
         let globals_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("cmux quad globals bind"),
+            label: Some("optimus quad globals bind"),
             layout: &bind_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -123,7 +123,7 @@ impl QuadLayer {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("cmux quad pipeline layout"),
+            label: Some("optimus quad pipeline layout"),
             bind_group_layouts: &[Some(&bind_layout)],
             immediate_size: 0,
         });
@@ -151,7 +151,7 @@ impl QuadLayer {
         };
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("cmux quad pipeline"),
+            label: Some("optimus quad pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -178,7 +178,7 @@ impl QuadLayer {
 
         let instance_capacity = 1024;
         let instances = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cmux quad instances"),
+            label: Some("optimus quad instances"),
             size: instance_capacity as u64 * std::mem::size_of::<QuadInstance>() as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -216,7 +216,7 @@ impl QuadLayer {
                 cap *= 2;
             }
             self.instances = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("cmux quad instances"),
+                label: Some("optimus quad instances"),
                 size: cap as u64 * std::mem::size_of::<QuadInstance>() as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,

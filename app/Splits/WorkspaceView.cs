@@ -2,15 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using Cmux.Controls;
-using Cmux.Core;
+using Optimus.Controls;
+using Optimus.Core;
 using Microsoft.UI.Xaml.Controls;
 
-namespace Cmux.Splits;
+namespace Optimus.Splits;
 
 /// <summary>
 /// One hosted workspace (plan Phase 2 U6, multi-workspace since Phase 5): it renders the model
-/// plane of a <see cref="Cmux.Core.Workspace"/> (whose <see cref="SplitTreeController"/> it drives),
+/// plane of a <see cref="Optimus.Core.Workspace"/> (whose <see cref="SplitTreeController"/> it drives),
 /// owns the surface plane (a <see cref="SurfaceManager"/> over real <c>TerminalPane</c>s), the
 /// <see cref="SplitTreeView"/> that renders them, and the <see cref="ShortcutRouter"/> that drives
 /// them by keyboard. The controller arrives pre-seeded with one pane + one surface (preserving
@@ -441,7 +441,7 @@ public sealed class WorkspaceView : UserControl
             && _titles.TryGetValue(id, out string? t)
             && !string.IsNullOrEmpty(t)
                 ? t
-                : "cmux";
+                : "optimus";
         // The focused surface's title doubles as the workspace's derived title (the sidebar row
         // label, unless a custom title overrides it — Phase 5).
         Model.SetTitle(title);

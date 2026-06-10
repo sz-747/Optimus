@@ -12,25 +12,25 @@ namespace Spike1;
 /// <see cref="SwapChainPanel"/> — create, animate a clear color, resize, and track DPI.
 ///
 /// Flow: QI the panel for <c>ISwapChainPanelNative</c>, hand the raw pointer to the Rust
-/// engine (<c>cmux_engine.dll</c>), which binds a wgpu surface to it via
+/// engine (<c>optimus_engine.dll</c>), which binds a wgpu surface to it via
 /// <c>SurfaceTargetUnsafe::SwapChainPanel</c> and drives present. wgpu internally calls
 /// <c>ISwapChainPanelNative::SetSwapChain</c>, so all surface work happens on the UI thread.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    private const string Engine = "cmux_engine.dll";
+    private const string Engine = "optimus_engine.dll";
 
     [DllImport(Engine, CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr cmux_spike_renderer_create(IntPtr panel, uint width, uint height);
+    private static extern IntPtr optimus_spike_renderer_create(IntPtr panel, uint width, uint height);
 
     [DllImport(Engine, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int cmux_spike_renderer_render(IntPtr renderer, double r, double g, double b);
+    private static extern int optimus_spike_renderer_render(IntPtr renderer, double r, double g, double b);
 
     [DllImport(Engine, CallingConvention = CallingConvention.Cdecl)]
-    private static extern void cmux_spike_renderer_resize(IntPtr renderer, uint width, uint height);
+    private static extern void optimus_spike_renderer_resize(IntPtr renderer, uint width, uint height);
 
     [DllImport(Engine, CallingConvention = CallingConvention.Cdecl)]
-    private static extern void cmux_spike_renderer_destroy(IntPtr renderer);
+    private static extern void optimus_spike_renderer_destroy(IntPtr renderer);
 
     // ISwapChainPanelNative — documented IID. We only need the QI'd pointer to hand to wgpu
     // (wgpu calls SetSwapChain itself), so no vtable/method declaration is required here.
@@ -60,7 +60,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
-        this.Title = "cmux spike 1 — SwapChainPanel";
+        this.Title = "optimus spike 1 — SwapChainPanel";
         Log("=== spike1 start ===");
 
         Panel.Loaded += OnPanelLoaded;
@@ -102,7 +102,7 @@ public sealed partial class MainWindow : Window
             }
 
             var (w, h) = PhysicalSize();
-            _renderer = cmux_spike_renderer_create(_panelNative, w, h);
+            _renderer = optimus_spike_renderer_create(_panelNative, w, h);
             if (_renderer == IntPtr.Zero)
             {
                 Status.Text = "renderer create FAILED (no DX12 adapter / surface bind?)";
@@ -135,7 +135,7 @@ public sealed partial class MainWindow : Window
         double r = 0.5 + 0.5 * Math.Sin(t);
         double g = 0.5 + 0.5 * Math.Sin(t + 2.0944); // +120°
         double b = 0.5 + 0.5 * Math.Sin(t + 4.1888); // +240°
-        int status = cmux_spike_renderer_render(_renderer, r, g, b);
+        int status = optimus_spike_renderer_render(_renderer, r, g, b);
         if (status == 0)
         {
             _presented++;
@@ -160,7 +160,7 @@ public sealed partial class MainWindow : Window
         }
 
         var (w, h) = PhysicalSize();
-        cmux_spike_renderer_resize(_renderer, w, h);
+        optimus_spike_renderer_resize(_renderer, w, h);
         Status.Text = $"resize {w}x{h} @ scale {Panel.CompositionScaleX:0.##}";
         Log($"resize -> {w}x{h} @ scale {Panel.CompositionScaleX:0.##}");
     }
@@ -173,7 +173,7 @@ public sealed partial class MainWindow : Window
         }
 
         var (w, h) = PhysicalSize();
-        cmux_spike_renderer_resize(_renderer, w, h);
+        optimus_spike_renderer_resize(_renderer, w, h);
         Status.Text = $"DPI scale {sender.CompositionScaleX:0.##} → {w}x{h}";
         Log($"DPI scale {sender.CompositionScaleX:0.##} -> {w}x{h}");
     }
@@ -187,7 +187,7 @@ public sealed partial class MainWindow : Window
         // then release the ref we took in the QueryInterface above.
         if (_renderer != IntPtr.Zero)
         {
-            cmux_spike_renderer_destroy(_renderer);
+            optimus_spike_renderer_destroy(_renderer);
             _renderer = IntPtr.Zero;
         }
         if (_panelNative != IntPtr.Zero)

@@ -1,6 +1,6 @@
 using Microsoft.UI.Xaml;
 
-namespace Cmux;
+namespace Optimus;
 
 /// <summary>
 /// The single window, hosting a <see cref="Sidebar.WorkspaceHost"/> (the workspace sidebar beside
@@ -15,7 +15,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
-        this.Title = "cmux";
+        this.Title = "optimus";
 
         Host.ActiveTitleChanged += OnTitleChanged;
         this.Activated += OnActivated;
@@ -25,7 +25,7 @@ public sealed partial class MainWindow : Window
     private void OnTitleChanged(string title)
     {
         // Raised on the UI thread when the focused surface's title (or the focus) changes.
-        this.Title = string.IsNullOrEmpty(title) ? "cmux" : title;
+        this.Title = string.IsNullOrEmpty(title) ? "optimus" : title;
     }
 
     private void OnActivated(object sender, WindowActivatedEventArgs args)

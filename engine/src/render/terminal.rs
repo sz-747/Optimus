@@ -345,11 +345,11 @@ impl TerminalRenderer {
         let mut encoder = panel
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("cmux frame encoder"),
+                label: Some("optimus frame encoder"),
             });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("cmux terminal pass"),
+                label: Some("optimus terminal pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,

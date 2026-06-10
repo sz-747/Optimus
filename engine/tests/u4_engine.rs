@@ -7,8 +7,8 @@
 
 use std::time::{Duration, Instant};
 
-use cmux_engine::engine::Engine;
-use cmux_engine::ffi::events::EngineOptions;
+use optimus_engine::engine::Engine;
+use optimus_engine::ffi::events::EngineOptions;
 
 /// Wait up to `timeout` for the visible grid to contain `needle`.
 fn wait_for_screen(engine: &Engine, needle: &str, timeout: Duration) -> String {
@@ -32,12 +32,12 @@ fn shell_output_reaches_the_grid() {
     // `cmd.exe` is always present and deterministic; it echoes the marker then exits.
     // (The pseudoconsole stays open after the child exits, so the grid retains the output.)
     engine
-        .spawn_shell("cmd.exe /c echo cmux_marker_42", None)
+        .spawn_shell("cmd.exe /c echo optimus_marker_42", None)
         .expect("spawn shell");
 
-    let screen = wait_for_screen(&engine, "cmux_marker_42", Duration::from_secs(15));
+    let screen = wait_for_screen(&engine, "optimus_marker_42", Duration::from_secs(15));
     assert!(
-        screen.contains("cmux_marker_42"),
+        screen.contains("optimus_marker_42"),
         "echoed marker never appeared in the grid; screen was:\n{screen}"
     );
 

@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Immutable;
-using Cmux.Core;
+using Optimus.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -8,7 +8,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 
-namespace Cmux.Sidebar;
+namespace Optimus.Sidebar;
 
 /// <summary>
 /// The workspace sidebar (plan Phase 5 U4): a vertical list of rows rendered imperatively from an

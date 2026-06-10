@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    cmux for Windows — the pure, UI-free model heart of the app (plan Phase 2, KTD3).
+    optimus for Windows — the pure, UI-free model heart of the app (plan Phase 2, KTD3).
     Plain net9.0 with NO WinUI / Windows App SDK dependency, so the split-tree model,
     controller, IDs, snapshots, divider math, derived focus, and directional navigation
     are unit-testable without a UI host. Becomes the home for the Phase-3 notification
@@ -9,8 +9,8 @@
   -->
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
-    <RootNamespace>Cmux.Core</RootNamespace>
-    <AssemblyName>Cmux.Core</AssemblyName>
+    <RootNamespace>Optimus.Core</RootNamespace>
+    <AssemblyName>Optimus.Core</AssemblyName>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>disable</ImplicitUsings>

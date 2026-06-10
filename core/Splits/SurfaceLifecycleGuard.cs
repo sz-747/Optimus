@@ -1,4 +1,4 @@
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// The attach-once / shutdown-once guard at the heart of the Phase-2 correctness fix (KTD9, R10).

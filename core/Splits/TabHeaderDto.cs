@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 
-namespace Cmux.Core;
+namespace Optimus.Core;
 
 /// <summary>
 /// A value-type snapshot of one tab's header (KTD5): everything the tab strip needs to draw a chip,
@@ -14,7 +14,7 @@ public readonly record struct TabHeaderDto(SurfaceId Id, string Title, bool IsSe
 
 /// <summary>
 /// Pure projection from model state (a pane's tab list + selected surface) to the immutable header
-/// row the tab strip renders. Kept in <c>Cmux.Core</c> so it is unit-testable without WinUI.
+/// row the tab strip renders. Kept in <c>Optimus.Core</c> so it is unit-testable without WinUI.
 /// </summary>
 public static class TabHeaderProjection
 {

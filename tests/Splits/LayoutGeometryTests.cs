@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using Cmux.Core;
+using Optimus.Core;
 using Xunit;
 
-namespace Cmux.Core.Tests;
+namespace Optimus.Core.Tests;
 
 /// <summary>
 /// Coverage for the pure geometry (plan Phase 2 U1): leaf-rect computation, directional pane

@@ -1,12 +1,12 @@
 [package]
-name = "cmux_engine"
+name = "optimus_engine"
 version = "0.1.0"
 edition = "2021"
-description = "cmux for Windows — terminal engine (VT core + ConPTY + GPU renderer) exposed as a C ABI cdylib"
+description = "Optimus for Windows — terminal engine (VT core + ConPTY + GPU renderer) exposed as a C ABI cdylib"
 license = "MIT"
 
 [lib]
-# cdylib: the cmux_engine.dll consumed by the C# app over FFI.
+# cdylib: the optimus_engine.dll consumed by the C# app over FFI.
 # rlib:   so integration tests / spikes in this crate can link the engine directly.
 crate-type = ["cdylib", "rlib"]
 
