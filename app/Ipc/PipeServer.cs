@@ -19,7 +19,13 @@ internal sealed class PipeServer
 {
     private const int MaxConcurrentClients = 16;
     private const int MaxServerInstances = 16;
+    private const int PipeBufferSize = 4096;
     private const string DefaultVariant = "stable";
+
+    // BOM-less: the CLI reads responses with a BOM-blind UTF-8 decoder, and a BOM-emitting writer
+    // would prepend U+FEFF to the first response line. (The BOM flush also deadlocked against
+    // zero-size pipe buffers — see PipeBufferSize.)
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     private readonly Func<string, CancellationToken, Task<string?>> _dispatch;
     private readonly Func<string, StreamWriter, CancellationToken, Task>? _eventsStream;
@@ -146,13 +152,13 @@ internal sealed class PipeServer
         {
             if (!IsClientAuthorized(server))
             {
-                await using StreamWriter unauthorized = new(server, Encoding.UTF8, bufferSize: 4096, leaveOpen: true) { AutoFlush = true };
+                await using StreamWriter unauthorized = new(server, Utf8NoBom, bufferSize: 4096, leaveOpen: true) { AutoFlush = true };
                 await WriteResponseAsync(unauthorized, SocketWireProtocol.SerializeV1Response("ERROR: access denied"));
                 return;
             }
 
-            using StreamReader reader = new(server, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-            using StreamWriter writer = new(server, Encoding.UTF8, bufferSize: 4096, leaveOpen: true) { AutoFlush = true };
+            using StreamReader reader = new(server, Utf8NoBom, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
+            using StreamWriter writer = new(server, Utf8NoBom, bufferSize: 4096, leaveOpen: true) { AutoFlush = true };
 
             while (!token.IsCancellationRequested && server.IsConnected)
             {
@@ -259,8 +265,12 @@ internal sealed class PipeServer
             maxNumberOfServerInstances: _maxServerInstances,
             transmissionMode: PipeTransmissionMode.Byte,
             options: PipeOptions.Asynchronous,
-            inBufferSize: 0,
-            outBufferSize: 0,
+            // Non-zero buffers are load-bearing: a 0-byte pipe buffer makes every WriteFile block
+            // until the peer reads it. With both ends writing before reading (client sends its
+            // request while the server's StreamWriter flushes its preamble), 0/0 deadlocks the
+            // handshake until the client times out ("Pipe is broken" on the server's first write).
+            inBufferSize: PipeBufferSize,
+            outBufferSize: PipeBufferSize,
             pipeSecurity: _pipeSecurity,
             inheritability: HandleInheritability.None);
     }
