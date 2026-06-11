@@ -1,6 +1,6 @@
 ---
 title: RAM Safe-Zone Capacity Governor — MVP
-status: active
+status: completed
 date: 2026-06-10
 sequence: 001
 kind: feat
