@@ -121,9 +121,12 @@ public partial class App : Application
     internal void StopCapacityGovernor()
     {
         // Same order as the StartCapacityGovernor failure path: ticker first (unregisters and
-        // drains the thread-pool wait on the provider's notification handle), then the provider.
-        // SaveCalibration sits between them — it must run after the last tick can mutate the
-        // budget, but before the provider it reads TotalPhysBytes from is disposed.
+        // drains the thread-pool wait on the provider's notification handle, bounded 2s+2s — a
+        // pathologically stuck callback could still tick once after this returns; the budget it
+        // writes is lock-protected and simply misses this save), then the provider.
+        // SaveCalibration runs before the provider it reads TotalPhysBytes from is disposed, and
+        // Capacity is unpublished before that disposal so no consumer can reach the model while
+        // its provider is being torn down.
         _capacityTicker?.Dispose();
         _capacityTicker = null;
 
@@ -136,9 +139,9 @@ public partial class App : Application
             LogError("App.StopCapacityGovernor", ex); // calibration loss is recoverable.
         }
 
+        Capacity = null;
         _capacityProvider?.Dispose();
         _capacityProvider = null;
-        Capacity = null;
     }
 
     private void StartPipeServer()
