@@ -77,7 +77,9 @@ Everything earlier than Phase 6 is shipped; do **not** re-execute it.
   one-line `Outcome:` block citing the shipping commit. `║`
   Worktree: `wt-res-u1-phase2-status` · Branch: `chore/res-u1-phase2-status`
   Files: `docs/plans/2026-06-05-001-feat-phase2-tabs-splits-plan.md`
-  PR: #3 · Merge: content commit `f382150` (awaiting user merge of PR #3)
+  PR: #4 · Merge: content commit `f382150` (PR #3 was mis-based on the stale
+  GitHub default branch `feat/phase1-walking-skeleton`; default flipped to `main`,
+  re-landed as PR #4)
   _Pure docs; no test impact. Mirrors the closeout done for the RAM safe-zone plan in commit `bbb7fcf`._
 
 - [ ] **res U2** — Fix CLI `optimus.exe` stdin hang when stdin is redirected but
@@ -214,6 +216,6 @@ A red gate is the end of the unit; fix it before opening a PR.
 
 ## Session log (append-only)
 
-- 2026-06-11 · chore/res-u1-phase2-status · res U1 · PR #3 · Phase 2 plan flipped to completed with Outcome block (PR #1, `30d97ab`); pure docs, no gates run per unit note.
+- 2026-06-11 · chore/res-u1-phase2-status · res U1 · PR #4 · Phase 2 plan flipped to completed with Outcome block (PR #1, `30d97ab`); pure docs, no gates run per unit note. PR #3 mis-merged into stale GitHub default branch `feat/phase1-walking-skeleton`; repo default flipped to `main`, work re-landed as PR #4.
 
 Format per entry: `- YYYY-MM-DD · <session-id-or-branch> · <unit-id> · PR #<n> · <outcome>`
