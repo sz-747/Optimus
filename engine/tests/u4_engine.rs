@@ -46,6 +46,27 @@ fn shell_output_reaches_the_grid() {
 }
 
 #[test]
+fn spawned_shell_reports_nonzero_child_pid() {
+    let mut engine = Engine::new(EngineOptions::default());
+
+    // Before any spawn the engine must report "no child" as 0 (the FFI contract for
+    // `optimus_engine_child_pid` — the host skips Job Object enrollment on 0).
+    assert_eq!(engine.child_pid(), 0, "child_pid must be 0 before spawn");
+
+    // Long-lived child so the PID is observably a live process right after spawn.
+    engine
+        .spawn_shell("cmd.exe /c ping -n 30 127.0.0.1 > NUL", None)
+        .expect("spawn shell");
+
+    // spawn_shell is synchronous (render thread publishes the PID before replying),
+    // so the PID must be valid immediately — no polling.
+    let pid = engine.child_pid();
+    assert_ne!(pid, 0, "spawned engine must report a non-zero ConPTY child PID");
+
+    drop(engine);
+}
+
+#[test]
 fn resize_before_spawn_is_honored() {
     let mut engine = Engine::new(EngineOptions::default());
     // Resize without a panel/surface must not error (renderer absent) and should set the grid.

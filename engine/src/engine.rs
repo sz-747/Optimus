@@ -8,6 +8,7 @@
 
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, Once};
 use std::thread::JoinHandle;
@@ -87,19 +88,25 @@ pub struct Engine {
     render_thread: Option<JoinHandle<()>>,
     /// Shared with the render thread's `AlertHandler`; updated by `set_event_callback`.
     sink: SharedSink,
+    /// PID of the spawned ConPTY child, written by the render thread on a successful
+    /// `SpawnShell` (before the synchronous reply), 0 until then. Read by
+    /// `optimus_engine_child_pid` so the host can enroll the child in a Job Object (U4).
+    child_pid: Arc<AtomicU32>,
 }
 
 impl Engine {
     pub fn new(options: EngineOptions) -> Self {
         let options = options.normalized();
         let sink: SharedSink = Arc::new(Mutex::new(None));
+        let child_pid = Arc::new(AtomicU32::new(0));
         let (tx, rx) = channel::<RenderCmd>();
 
         let render_sink = Arc::clone(&sink);
+        let render_child_pid = Arc::clone(&child_pid);
         let render_tx = tx.clone();
         let render_thread = std::thread::Builder::new()
             .name("optimus-render".into())
-            .spawn(move || render_loop(options, rx, render_tx, render_sink))
+            .spawn(move || render_loop(options, rx, render_tx, render_sink, render_child_pid))
             .expect("spawn render thread");
 
         Self {
@@ -107,7 +114,15 @@ impl Engine {
             tx,
             render_thread: Some(render_thread),
             sink,
+            child_pid,
         }
+    }
+
+    /// The Windows process id of the spawned ConPTY child, or 0 if no shell has been
+    /// spawned (or the spawn failed). Set by the render thread before `spawn_shell`'s
+    /// synchronous reply, so it is valid as soon as `spawn_shell` returns `Ok`.
+    pub fn child_pid(&self) -> u32 {
+        self.child_pid.load(Ordering::SeqCst)
     }
 
     /// Register the host-event callback (notifications/title/bell/cwd/exit).
@@ -272,6 +287,8 @@ struct RenderState {
     options: EngineOptions,
     sink: SharedSink,
     self_tx: Sender<RenderCmd>,
+    /// Shared with the owning [`Engine`]; stores the ConPTY child's PID on spawn (U4).
+    child_pid: Arc<AtomicU32>,
 
     terminal: Option<Terminal>,
     reader: Option<JoinHandle<()>>,
@@ -331,6 +348,7 @@ fn render_loop(
     rx: Receiver<RenderCmd>,
     self_tx: Sender<RenderCmd>,
     sink: SharedSink,
+    child_pid: Arc<AtomicU32>,
 ) {
     install_render_panic_logger();
 
@@ -338,6 +356,7 @@ fn render_loop(
         options,
         sink,
         self_tx,
+        child_pid,
         terminal: None,
         reader: None,
         pty: None,
@@ -588,6 +607,9 @@ impl RenderState {
     fn spawn_shell(&mut self, cmdline: &str, cwd: Option<&str>) -> Result<(), String> {
         let pty = ConPty::spawn(cmdline, cwd, self.cols, self.rows)
             .map_err(|e| format!("spawn shell failed: {e}"))?;
+        // Publish the child PID before the synchronous reply unblocks the FFI caller, so
+        // `optimus_engine_child_pid` is valid the moment `spawn_shell` returns Ok (U4).
+        self.child_pid.store(pty.child_pid(), Ordering::SeqCst);
 
         let size = TerminalSize {
             rows: self.rows as usize,

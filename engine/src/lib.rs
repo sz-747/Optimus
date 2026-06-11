@@ -145,6 +145,22 @@ pub unsafe extern "C" fn optimus_engine_spawn_shell(
     })
 }
 
+/// The Windows process id of the spawned ConPTY child, or `0` when unavailable (no shell
+/// spawned yet, spawn failed, or null engine). Valid as soon as [`optimus_engine_spawn_shell`]
+/// returns `0`. The host uses it to enroll the child in a per-terminal Job Object (plan U4).
+///
+/// # Safety
+/// `engine` must be a live handle from [`optimus_engine_create`] (or null → returns 0).
+#[no_mangle]
+pub unsafe extern "C" fn optimus_engine_child_pid(engine: *mut Engine) -> u32 {
+    ffi::guard(0, || {
+        let Some(engine) = (unsafe { engine.as_ref() }) else {
+            return 0;
+        };
+        engine.child_pid()
+    })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Input
 // ─────────────────────────────────────────────────────────────────────────────

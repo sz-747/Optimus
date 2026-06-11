@@ -147,6 +147,17 @@ internal sealed unsafe class EngineHandle : IDisposable
         }
     }
 
+    /// <summary>
+    /// The Windows process id of the spawned ConPTY child, or 0 when unavailable (no shell
+    /// spawned yet / spawn failed). Valid as soon as <see cref="SpawnShell"/> returns — used
+    /// to enroll the child in a per-terminal <see cref="TerminalJobObject"/> (plan U4).
+    /// </summary>
+    public uint ChildPid()
+    {
+        ThrowIfDisposed();
+        return NativeMethods.optimus_engine_child_pid(_engine);
+    }
+
     /// <summary>Send already-resolved input text (layout/IME/paste) to the shell.</summary>
     public void SendText(string text)
     {

@@ -68,6 +68,17 @@ namespace Optimus.Interop
         internal static extern int optimus_engine_spawn_shell(Engine* engine, byte* cmdline_utf8, nuint cmdline_len, byte* cwd_utf8, nuint cwd_len);
 
         /// <summary>
+        ///  The Windows process id of the spawned ConPTY child, or `0` when unavailable (no shell
+        ///  spawned yet, spawn failed, or null engine). Valid as soon as [`optimus_engine_spawn_shell`]
+        ///  returns `0`. The host uses it to enroll the child in a per-terminal Job Object (plan U4).
+        ///
+        ///  # Safety
+        ///  `engine` must be a live handle from [`optimus_engine_create`] (or null → returns 0).
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "optimus_engine_child_pid", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern uint optimus_engine_child_pid(Engine* engine);
+
+        /// <summary>
         ///  Send already-resolved text (layout/IME/paste) to the shell. UTF-8 `ptr + len`.
         ///
         ///  # Safety

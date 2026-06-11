@@ -15,6 +15,12 @@ internal static partial class MemoryNativeMethods
     /// <summary>Access right for <see cref="OpenProcess"/>: enough to query memory counters.</summary>
     internal const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
+    /// <summary>Access right for <see cref="OpenProcess"/>: required by AssignProcessToJobObject.</summary>
+    internal const uint PROCESS_TERMINATE = 0x0001;
+
+    /// <summary>Access right for <see cref="OpenProcess"/>: required by AssignProcessToJobObject.</summary>
+    internal const uint PROCESS_SET_QUOTA = 0x0100;
+
     /// <summary>MEMORY_RESOURCE_NOTIFICATION_TYPE: signal when system memory is low.</summary>
     internal const int LowMemoryResourceNotification = 0;
 

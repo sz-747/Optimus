@@ -173,6 +173,12 @@ impl ConPty {
         Ok(())
     }
 
+    /// The Windows process id of the spawned shell (the ConPTY child). Used by the host to
+    /// enroll the child in a per-terminal Job Object (RAM safe-zone plan U4).
+    pub fn child_pid(&self) -> u32 {
+        self.proc_info.dwProcessId
+    }
+
     /// Whether the spawned shell process is still running. The engine uses this to detect
     /// the shell exiting (so it can close the pane); `STILL_ACTIVE` (259) means running.
     pub fn child_alive(&self) -> bool {

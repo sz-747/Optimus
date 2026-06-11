@@ -32,6 +32,11 @@ public sealed partial class TerminalPane : UserControl, ISurface
 {
     private EngineHandle? _engine;
 
+    // Tier-2 RAM safe-zone backstop (plan U4): the per-terminal Job Object the ConPTY child is
+    // enrolled in right after spawn. Owned by this pane; disposed in Shutdown so teardown reaps
+    // the child tree (KILL_ON_JOB_CLOSE). Null when enrollment failed/unavailable — best-effort.
+    private TerminalJobObject? _jobObject;
+
     // The AddRef'd ISwapChainPanelNative* handed to the engine. Released after the engine is
     // destroyed (which drops wgpu's own ref) — see <see cref="Shutdown"/>.
     private IntPtr _panelNative;
@@ -140,11 +145,52 @@ public sealed partial class TerminalPane : UserControl, ISurface
         finally
         {
             _engine = null;
+            // Close the job AFTER the engine teardown gave the shell its orderly exit
+            // (ClosePseudoConsole); KILL_ON_JOB_CLOSE then reaps any straggler descendants (U4).
+            _jobObject?.Dispose();
+            _jobObject = null;
             if (_panelNative != IntPtr.Zero)
             {
                 Marshal.Release(_panelNative);
                 _panelNative = IntPtr.Zero;
             }
+        }
+    }
+
+    /// <summary>
+    /// Tier-2 RAM safe-zone backstop (plan U4): enroll the just-spawned ConPTY child in a
+    /// per-terminal Job Object capped at 2 × the current per-terminal budget. Best-effort —
+    /// any failure (no capacity model, job creation/assignment failure) leaves the terminal
+    /// running un-backstopped and logs; it never blocks the spawn path.
+    /// </summary>
+    private void EnrollChildInJobObject()
+    {
+        try
+        {
+            uint pid = _engine?.ChildPid() ?? 0;
+            if (pid == 0)
+            {
+                return;
+            }
+
+            // 2 × budget: the budget is the calibrated *typical* cost; the hard cap only has to
+            // stop runaways, not normal variance. Seed budget (200 MB) when the governor is down.
+            ulong budget = App.Capacity?.PerTerminalBudgetBytes ?? CapacityModel.SeedBudgetBytes;
+            TerminalJobObject? job = TerminalJobObject.TryCreate(2 * budget);
+            if (job is null)
+            {
+                return;
+            }
+            if (!job.TryAssign((int)pid))
+            {
+                job.Dispose();
+                return;
+            }
+            _jobObject = job;
+        }
+        catch (Exception ex)
+        {
+            App.LogError("TerminalPane.EnrollChildInJobObject", ex);
         }
     }
 
@@ -199,6 +245,7 @@ public sealed partial class TerminalPane : UserControl, ISurface
                 // Empty cmdline → engine's default shell (pwsh → powershell → cmd); cwd null → inherit.
                 _engine.SpawnShell(_cmdline ?? string.Empty, _cwd);
                 _started = true; // only after a successful spawn, so a failure retries next call
+                EnrollChildInJobObject();
                 Panel.Focus(FocusState.Programmatic);
             }
         }
