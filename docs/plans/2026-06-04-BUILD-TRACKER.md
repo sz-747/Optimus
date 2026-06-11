@@ -106,7 +106,7 @@ touches it — others stay disjoint.
   _Verification: `cargo test --manifest-path engine\Cargo.toml`; manual A/B
   screenshot vs main on an emoji/CJK/ligature corpus; record frame timings before/after._
 
-- [ ] **p6 U2** — Governor disposal on normal app shutdown + calibration
+- [x] **p6 U2** — Governor disposal on normal app shutdown + calibration
   save-on-exit verification. Currently the `CapacityModel`/`CapacityTicker`
   aren't disposed on graceful shutdown and `capacity.json` save-on-exit is
   unobserved live. Wire `App.OnLaunched` startup to a matching teardown in the
@@ -117,7 +117,10 @@ touches it — others stay disjoint.
   Worktree: `wt-p6-u2-governor-shutdown` · Branch: `fix/p6-u2-governor-shutdown`
   Files: `app/App.xaml.cs` `(hot)`, `app/Capacity/CapacityTicker.cs`,
   `app/Capacity/JsonCalibrationStore.cs`, `docs/runbooks/2026-06-10-ram-safe-zone-smoke.md`.
-  PR: _none yet_ · Merge: _—_
+  PR: #6 · Merge: content commits `5b097b6` + `851e7e3` (App.StopCapacityGovernor:
+  ticker → SaveCalibration → unpublish Capacity → provider, wired last in
+  MainWindow.OnClosed; codex review reordered Capacity=null ahead of provider
+  disposal; CapacityTicker/JsonCalibrationStore needed no changes)
   _Verification: dotnet test 238+; launch app, spawn ≥3 surfaces, exit, confirm
   `%LOCALAPPDATA%\optimus\capacity.json` updated mtime + new `budgetBytes`._
 
@@ -217,5 +220,6 @@ A red gate is the end of the unit; fix it before opening a PR.
 ## Session log (append-only)
 
 - 2026-06-11 · chore/res-u1-phase2-status · res U1 · PR #4 · Phase 2 plan flipped to completed with Outcome block (PR #1, `30d97ab`); pure docs, no gates run per unit note. PR #3 mis-merged into stale GitHub default branch `feat/phase1-walking-skeleton`; repo default flipped to `main`, work re-landed as PR #4.
+- 2026-06-12 · fix/p6-u2-governor-shutdown · p6 U2 · PR #6 · Governor now torn down on graceful shutdown: MainWindow.OnClosed → App.StopCapacityGovernor (ticker dispose → SaveCalibration → Capacity unpublished → provider dispose). Gates: dotnet 238 (floor; res U2's +6 live in unmerged PR #5), cargo 19, app build 0 new warnings (34 pre-existing nullable warnings in core/Ipc/CommandRouter.cs surfaced on full rebuild — they predate this unit). Live smoke ×3: graceful close exits 0, `%LOCALAPPDATA%\optimus\capacity.json` created then mtime-advances each exit, correct JSON shape. Codex review: 1 fix taken (unpublish Capacity before provider disposal), accepted trade-off documented (CapacityTicker.Dispose's bounded 2s+2s drains run on the UI thread during close — worst-case ~4s stall, common path milliseconds).
 
 Format per entry: `- YYYY-MM-DD · <session-id-or-branch> · <unit-id> · PR #<n> · <outcome>`
