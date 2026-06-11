@@ -1,12 +1,15 @@
 ---
 title: "Phase 2 — Tabs + split panes"
 type: feat
-status: active
+status: completed
 date: 2026-06-05
 origin: docs/plans/2026-06-04-001-feature-cmux-windows-plan.md
 ---
 
 # Phase 2 — Tabs + split panes
+
+> **Outcome:** Shipped 2026-06-06 via PR #1, merge commit `30d97ab` — all units
+> (U1–U7) landed on `main`.
 
 ## Summary
 
