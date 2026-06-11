@@ -112,6 +112,35 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// Tear down the governor on graceful shutdown — the matching end of
+    /// <see cref="StartCapacityGovernor"/>, driven by the main window's <c>Closed</c> handler.
+    /// Persists the learned per-terminal budget so the next session starts already-calibrated
+    /// instead of re-learning from the seed. Idempotent; tolerates a governor that never started.
+    /// </summary>
+    internal void StopCapacityGovernor()
+    {
+        // Same order as the StartCapacityGovernor failure path: ticker first (unregisters and
+        // drains the thread-pool wait on the provider's notification handle), then the provider.
+        // SaveCalibration sits between them — it must run after the last tick can mutate the
+        // budget, but before the provider it reads TotalPhysBytes from is disposed.
+        _capacityTicker?.Dispose();
+        _capacityTicker = null;
+
+        try
+        {
+            Capacity?.SaveCalibration();
+        }
+        catch (Exception ex)
+        {
+            LogError("App.StopCapacityGovernor", ex); // calibration loss is recoverable.
+        }
+
+        _capacityProvider?.Dispose();
+        _capacityProvider = null;
+        Capacity = null;
+    }
+
     private void StartPipeServer()
     {
         if (_pipeServer is not null)

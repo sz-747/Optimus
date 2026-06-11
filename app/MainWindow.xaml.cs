@@ -37,11 +37,13 @@ public sealed partial class MainWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
-        if (Application.Current is App app)
-        {
-            app.StopPipeServer();
-        }
+        var app = Application.Current as App;
+        app?.StopPipeServer();
 
         Host.ShutdownAll();
+
+        // Last, mirroring launch order (governor starts before the window): stop the capacity
+        // ticker, persist the learned calibration, and release the Win32 provider.
+        app?.StopCapacityGovernor();
     }
 }
