@@ -64,7 +64,7 @@ public sealed class StdinReaderTests
     {
         // PowerShell 5.1 parents push a lone BOM onto the pipe, then go silent;
         // the drain must end at the quiet window, not sit out the hard cap.
-        using var reader = new BlockingReader(initial: "﻿");
+        using var reader = new BlockingReader(initial: "\uFEFF");
         var sw = Stopwatch.StartNew();
 
         string? result = StdinReader.ReadAvailable(reader, Long, drainTimeout: TimeSpan.FromSeconds(10));
@@ -76,7 +76,7 @@ public sealed class StdinReaderTests
     [Fact]
     public void Strips_leading_bom_from_payload()
     {
-        using var reader = new StringReader("﻿{\"message\":\"done\"}");
+        using var reader = new StringReader("\uFEFF{\"message\":\"done\"}");
 
         string? result = StdinReader.ReadAvailable(reader, Long, Long);
 
