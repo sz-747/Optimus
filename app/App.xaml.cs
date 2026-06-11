@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
+using Optimus.Capacity;
 using Optimus.Ipc;
 using Optimus.Core;
 
@@ -20,6 +21,15 @@ public partial class App : Application
     private PipeServerEffects? _pipeServerEffects;
     private readonly PasswordStore _passwordStore = new();
     private bool _socketAuthenticated;
+    private Win32CapacityProvider? _capacityProvider;
+    private CapacityTicker? _capacityTicker;
+
+    /// <summary>
+    /// App-wide RAM safe-zone governor (plan U3). Composed in <see cref="OnLaunched"/> before the
+    /// main window so the spawn gate (U5) and the sidebar indicator (U6) can reach it. Null only
+    /// if composition failed (logged, non-fatal) — consumers must tolerate that.
+    /// </summary>
+    internal static CapacityModel? Capacity { get; private set; }
 
     public App()
     {
@@ -58,10 +68,45 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        StartCapacityGovernor();
+
         _window = new MainWindow();
         _window.Activate();
 
         StartPipeServer();
+    }
+
+    /// <summary>
+    /// Compose the RAM safe-zone governor: Win32 provider + persisted calibration + 1 Hz ticker
+    /// (plan U3). Failure is logged and leaves <see cref="Capacity"/> null — the app must still
+    /// launch as a plain multiplexer rather than crash over a measurement problem.
+    /// </summary>
+    private void StartCapacityGovernor()
+    {
+        if (Capacity is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            _capacityProvider = new Win32CapacityProvider();
+            var model = new CapacityModel(_capacityProvider, new JsonCalibrationStore());
+            model.LoadCalibration();
+            model.StateChanged += state =>
+                System.Diagnostics.Debug.WriteLine(
+                    $"[capacity] used={state.Used} reserved={state.Reserved} max={state.Max} level={state.Level}");
+            _capacityTicker = new CapacityTicker(model, _capacityProvider);
+            Capacity = model;
+        }
+        catch (Exception ex)
+        {
+            LogError("App.StartCapacityGovernor", ex);
+            _capacityTicker?.Dispose();
+            _capacityTicker = null;
+            _capacityProvider?.Dispose();
+            _capacityProvider = null;
+        }
     }
 
     private void StartPipeServer()
