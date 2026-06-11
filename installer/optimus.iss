@@ -51,7 +51,9 @@ ChangesEnvironment=yes
 UninstallDisplayIcon={app}\{#AppExeName}
 
 [Tasks]
-Name: "addtopath"; Description: "Add the optimus CLI to your user PATH"; GroupDescription: "Shell integration:"
+; unchecked: PATH edits require explicit consent — without this flag Inno selects
+; the task by default and "opt-in" would be documentation fiction.
+Name: "addtopath"; Description: "Add the optimus CLI to your user PATH"; GroupDescription: "Shell integration:"; Flags: unchecked
 
 [Files]
 ; Self-contained app publish output, verbatim (includes optimus_engine.dll,
