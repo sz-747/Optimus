@@ -87,7 +87,28 @@ $h = (Get-Process -Id $shell.ProcessId).Handle; $in = $false
 Enrollment is best-effort: a failure logs `TerminalPane.EnrollChildInJobObject`
 and leaves the terminal un-backstopped rather than blocking the spawn.
 
-## 5. Where state and logs live
+## 5. Verify calibration save-on-exit (p6 U2)
+
+On graceful shutdown the window's `Closed` handler tears the governor down
+(ticker first, then provider) and persists the learned budget via
+`SaveCalibration()`. Confirm the file actually mutates:
+
+```powershell
+$cal = "$env:LOCALAPPDATA\optimus\capacity.json"
+$before = (Get-Item $cal -ErrorAction SilentlyContinue).LastWriteTime
+# Launch the app, spawn ≥ 3 surfaces, then close the window normally (titlebar X).
+$after = (Get-Item $cal).LastWriteTime
+"$before → $after"          # after must be newer (file created if it was absent)
+Get-Content $cal            # budgetBytes reflects the session's learned budget
+```
+
+Expected: `LastWriteTime` advances past the app-exit moment and the JSON still
+has the `{ "budgetBytes": …, "hardwareFingerprintGb": … }` shape. A save
+failure is non-fatal — it logs through `App.LogError` with source
+`App.StopCapacityGovernor` (or `JsonCalibrationStore.Save`) instead of blocking
+shutdown.
+
+## 6. Where state and logs live
 
 - **Calibration:** `%LOCALAPPDATA%\optimus\capacity.json` —
   `{ "budgetBytes": …, "hardwareFingerprintGb": … }`. Delete it to reset to the
@@ -101,7 +122,7 @@ and leaves the terminal un-backstopped rather than blocking the spawn.
   `CapacityTicker.OnLowMemorySignaled`, `TerminalPane.EnrollChildInJobObject`,
   `JsonCalibrationStore.Save`.
 
-## 6. Screenshot capture note (dev machine)
+## 7. Screenshot capture note (dev machine)
 
 Programmatic verification uses `SetProcessDPIAware` + `PrintWindow` /
 `CopyFromScreen`. DPI-awareness is **required** — without it the right side of
