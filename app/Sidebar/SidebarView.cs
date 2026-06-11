@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Immutable;
 using Optimus.Core;
+using Optimus.Design;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -36,6 +37,7 @@ internal sealed class SidebarView : Grid
     private static readonly SolidColorBrush BadgeText = new(Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF));
 
     private readonly StackPanel _rows;
+    private readonly CapacityIndicatorViewModel _capacity;
 
     /// <summary>Raised when the user clicks a row body — select/focus that workspace.</summary>
     public event Action<WorkspaceId>? WorkspaceInvoked;
@@ -63,6 +65,12 @@ internal sealed class SidebarView : Grid
         Grid.SetRow(scroller, 0);
         Children.Add(scroller);
 
+        // Footer (plan U6): always-visible capacity meter above the New-Workspace button; the
+        // button greys out at the safe-zone cap with a one-line reason (DESIGN.md Thesis). The
+        // governor may be null (U3 failure path) — the indicator then shows the dash placeholder
+        // and never disables the button.
+        _capacity = new CapacityIndicatorViewModel(App.Capacity, Dispatch);
+
         var newButton = new Button
         {
             Content = "+  New workspace",
@@ -72,10 +80,49 @@ internal sealed class SidebarView : Grid
             BorderBrush = TransparentRow,
             Foreground = MetaText,
             Margin = new Thickness(4),
+            IsEnabled = !_capacity.IsAtCap,
         };
         newButton.Click += (_, _) => NewWorkspaceRequested?.Invoke();
-        Grid.SetRow(newButton, 1);
-        Children.Add(newButton);
+
+        var capHint = new TextBlock
+        {
+            Foreground = Tokens.TextMuted,
+            FontSize = Tokens.FontMeta,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(10, 0, 10, 8),
+            Text = _capacity.HintText ?? "",
+            Visibility = _capacity.HintText is null ? Visibility.Collapsed : Visibility.Visible,
+        };
+
+        _capacity.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(CapacityIndicatorViewModel.IsAtCap))
+            {
+                newButton.IsEnabled = !_capacity.IsAtCap;
+            }
+            else if (e.PropertyName is nameof(CapacityIndicatorViewModel.HintText))
+            {
+                capHint.Text = _capacity.HintText ?? "";
+                capHint.Visibility = _capacity.HintText is null ? Visibility.Collapsed : Visibility.Visible;
+            }
+        };
+
+        var footer = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical };
+        footer.Children.Add(new CapacityIndicatorView(_capacity));
+        footer.Children.Add(newButton);
+        footer.Children.Add(capHint);
+        Grid.SetRow(footer, 1);
+        Children.Add(footer);
+    }
+
+    /// <summary>Marshal a capacity state change onto this view's UI thread (StateChanged fires on
+    /// the 1 Hz ticker thread, plan U3).</summary>
+    private void Dispatch(Action action)
+    {
+        if (DispatcherQueue is null || !DispatcherQueue.TryEnqueue(() => action()))
+        {
+            action();
+        }
     }
 
     /// <summary>Rebuild the row list from a fresh value snapshot (cheap at sidebar scale).</summary>
