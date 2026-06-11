@@ -26,7 +26,8 @@ namespace Optimus.Splits;
 public sealed class WorkspaceView : UserControl
 {
     private readonly SplitTreeController _controller;
-    private readonly SurfaceManager _surfaces = new(new TerminalPaneSurfaceFactory());
+    private readonly SurfaceManager _surfaces =
+        new(new TerminalPaneSurfaceFactory(), App.Capacity); // null-tolerant: ungoverned if the governor failed to start
     private readonly SplitTreeView _tree;
     private readonly ShortcutRouter _shortcuts;
 
@@ -230,7 +231,15 @@ public sealed class WorkspaceView : UserControl
 
     private void CreateSurfaceEngine(SurfaceId id)
     {
-        ISurface surface = _surfaces.CreateSurface(id); // default shell, inherited cwd (Phase-1 parity)
+        // Capacity-gated (RAM safe-zone plan U5): at the cap the create is refused gracefully —
+        // the model-plane pane stays engineless rather than crashing the machine by over-spawning.
+        // U6 disables the spawn affordances before users normally hit this path.
+        ISurface? surface = _surfaces.TryCreateSurface(id); // default shell, inherited cwd (Phase-1 parity)
+        if (surface is null)
+        {
+            System.Diagnostics.Debug.WriteLine($"[capacity] surface {id} refused: safe-zone cap reached");
+            return;
+        }
         surface.TitleChanged += title => OnSurfaceTitleChanged(id, title);
 
         // Notification handler is stored so it can be detached on close (leak safety — see field doc).

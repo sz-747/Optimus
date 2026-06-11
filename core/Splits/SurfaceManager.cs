@@ -15,11 +15,17 @@ namespace Optimus.Core;
 public sealed class SurfaceManager : IDisposable
 {
     private readonly ISurfaceFactory _factory;
+    private readonly CapacityModel? _capacity;
     private readonly Dictionary<SurfaceId, ISurface> _surfaces = new();
 
-    public SurfaceManager(ISurfaceFactory factory)
+    /// <summary>
+    /// <paramref name="capacity"/> is the RAM safe-zone admission governor (plan U5); null leaves
+    /// the manager ungoverned (tests, degraded startup — see <c>App.StartCapacityGovernor</c>).
+    /// </summary>
+    public SurfaceManager(ISurfaceFactory factory, CapacityModel? capacity = null)
     {
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+        _capacity = capacity;
     }
 
     /// <summary>The live surfaces, keyed by id.</summary>
@@ -33,13 +39,53 @@ public sealed class SurfaceManager : IDisposable
     /// a duplicate request for a live id returns the same instance rather than building a second.
     /// </summary>
     public ISurface CreateSurface(SurfaceId id, string? cwd = null, string? cmdline = null)
+        => TryCreateSurface(id, cwd, cmdline)
+           ?? throw new InvalidOperationException(
+               $"Safe-zone cap reached; surface {id} refused. Governed callers must use TryCreateSurface.");
+
+    /// <summary>
+    /// Capacity-gated create (RAM safe-zone plan U5): the single spawn choke point. Returns the
+    /// existing surface for a live id (idempotent, never consumes a second slot), <c>null</c> when
+    /// the <see cref="CapacityModel"/> refuses a slot (graceful refusal — no factory call, no
+    /// throw), or the freshly built surface otherwise. A factory exception releases the
+    /// reservation before rethrowing. With no model attached, never refuses.
+    /// </summary>
+    public ISurface? TryCreateSurface(SurfaceId id, string? cwd = null, string? cmdline = null)
     {
         if (_surfaces.TryGetValue(id, out ISurface? existing))
         {
-            return existing;
+            return existing; // idempotent per id (R1) — no capacity consumed
         }
-        ISurface surface = _factory.Create(id, cwd, cmdline);
+
+        ReservationToken? token = null;
+        if (_capacity is not null)
+        {
+            token = _capacity.TryReserve(id);
+            if (token is null)
+            {
+                return null; // at cap — refuse without invoking the factory
+            }
+        }
+
+        ISurface surface;
+        try
+        {
+            surface = _factory.Create(id, cwd, cmdline);
+        }
+        catch
+        {
+            _capacity?.Release(id); // failed spawn must not strand a reserved slot
+            throw;
+        }
+
         _surfaces[id] = surface;
+        // The engine spawns its child lazily (TerminalPane.Configure), so no PID exists at this
+        // layer yet — commit with pid 0 to settle the slot accounting; the pane reports the real
+        // PID's memory via RecordMeasurement during calibration (U4).
+        if (token is not null)
+        {
+            _capacity!.Commit(token, pid: 0);
+        }
         return surface;
     }
 
@@ -52,6 +98,7 @@ public sealed class SurfaceManager : IDisposable
         if (_surfaces.Remove(id, out ISurface? surface))
         {
             surface.Shutdown();
+            _capacity?.Release(id); // free the safe-zone slot (U5)
         }
     }
 
@@ -60,10 +107,18 @@ public sealed class SurfaceManager : IDisposable
     {
         // Snapshot first: Shutdown() must not be able to mutate the dictionary mid-iteration.
         List<ISurface> all = _surfaces.Values.ToList();
+        List<SurfaceId> ids = _surfaces.Keys.ToList();
         _surfaces.Clear();
         foreach (ISurface surface in all)
         {
             surface.Shutdown();
+        }
+        if (_capacity is not null)
+        {
+            foreach (SurfaceId id in ids)
+            {
+                _capacity.Release(id); // free every safe-zone slot (U5)
+            }
         }
     }
 
