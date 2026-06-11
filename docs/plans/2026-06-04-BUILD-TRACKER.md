@@ -77,7 +77,7 @@ Everything earlier than Phase 6 is shipped; do **not** re-execute it.
   one-line `Outcome:` block citing the shipping commit. `║`
   Worktree: `wt-res-u1-phase2-status` · Branch: `chore/res-u1-phase2-status`
   Files: `docs/plans/2026-06-05-001-feat-phase2-tabs-splits-plan.md`
-  PR: #3 · Merge: `f382150` (ff to main)
+  PR: #3 · Merge: content commit `f382150` (awaiting user merge of PR #3)
   _Pure docs; no test impact. Mirrors the closeout done for the RAM safe-zone plan in commit `bbb7fcf`._
 
 - [ ] **res U2** — Fix CLI `optimus.exe` stdin hang when stdin is redirected but
