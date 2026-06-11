@@ -25,7 +25,7 @@ internal sealed class CapacityTicker : IDisposable
     private readonly Win32CapacityProvider _provider;
     private readonly object _gate = new();
     private readonly Timer _timer;
-    private ManualResetEvent? _notificationEvent;
+    private WaitHandle? _notificationEvent;
     private RegisteredWaitHandle? _registeredWait;
     private bool _waitFired;
     private bool _disposed;
@@ -92,10 +92,7 @@ internal sealed class CapacityTicker : IDisposable
                 return;
             }
             // Borrow (do not own) the provider's handle so disposing the event never closes it.
-            _notificationEvent ??= new ManualResetEvent(initialState: false)
-            {
-                SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle: false),
-            };
+            _notificationEvent ??= new BorrowedWaitHandle(handle);
             _waitFired = false;
             _registeredWait = ThreadPool.RegisterWaitForSingleObject(
                 _notificationEvent,
@@ -128,7 +125,7 @@ internal sealed class CapacityTicker : IDisposable
     public void Dispose()
     {
         RegisteredWaitHandle? wait;
-        ManualResetEvent? notificationEvent;
+        WaitHandle? notificationEvent;
         lock (_gate)
         {
             if (_disposed)
@@ -151,7 +148,31 @@ internal sealed class CapacityTicker : IDisposable
             }
         }
 
-        wait?.Unregister(null);
+        // Drain the wait too: Unregister(waitObject) signals `callbacksDone` once any in-flight
+        // OnLowMemorySignaled callback has completed, so the provider/model it touches are not
+        // disposed underneath it (bounded — never hang shutdown on a stuck callback).
+        if (wait is not null)
+        {
+            using var callbacksDone = new ManualResetEvent(initialState: false);
+            if (wait.Unregister(callbacksDone))
+            {
+                callbacksDone.WaitOne(TimeSpan.FromSeconds(2));
+            }
+        }
         notificationEvent?.Dispose(); // does not close the provider's handle (ownsHandle: false)
+    }
+
+    /// <summary>
+    /// A <see cref="WaitHandle"/> view over a borrowed kernel handle. Unlike
+    /// <c>new ManualResetEvent(false) { SafeWaitHandle = ... }</c>, this never creates a kernel
+    /// event of its own (which would leak when its SafeWaitHandle is replaced), and
+    /// <c>ownsHandle: false</c> means disposing it never closes the provider's handle.
+    /// </summary>
+    private sealed class BorrowedWaitHandle : WaitHandle
+    {
+        public BorrowedWaitHandle(IntPtr handle)
+        {
+            SafeWaitHandle = new SafeWaitHandle(handle, ownsHandle: false);
+        }
     }
 }

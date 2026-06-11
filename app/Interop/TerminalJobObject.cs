@@ -74,31 +74,31 @@ internal sealed class TerminalJobObject : IDisposable
     }
 
     /// <summary>
-    /// Enroll the process <paramref name="pid"/> (the ConPTY child) in this job.
+    /// Enroll the process behind <paramref name="processHandle"/> (the ConPTY child, from
+    /// <see cref="EngineHandle.ChildProcessHandle"/>) in this job. Assigning by handle — never
+    /// by <c>OpenProcess(pid)</c> — closes the PID-reuse TOCTOU: a recycled PID could otherwise
+    /// enroll (and later KILL_ON_JOB_CLOSE) an unrelated process. The caller keeps ownership of
+    /// the handle and may close it right after; job membership persists.
     /// Returns <c>false</c> (logged) on any failure — the terminal then runs un-backstopped.
     /// </summary>
-    public bool TryAssign(int pid)
+    public bool TryAssign(System.Runtime.InteropServices.SafeHandle processHandle)
     {
-        if (pid <= 0 || _job.IsClosed || _job.IsInvalid)
+        ArgumentNullException.ThrowIfNull(processHandle);
+        if (processHandle.IsInvalid || processHandle.IsClosed || _job.IsClosed || _job.IsInvalid)
         {
             return false;
         }
 
-        IntPtr process = IntPtr.Zero;
+        bool addedRef = false;
         try
         {
-            // AssignProcessToJobObject requires PROCESS_SET_QUOTA | PROCESS_TERMINATE.
-            process = MemoryNativeMethods.OpenProcess(
-                MemoryNativeMethods.PROCESS_SET_QUOTA | MemoryNativeMethods.PROCESS_TERMINATE,
-                bInheritHandle: false,
-                (uint)pid);
-            if (process == IntPtr.Zero)
-            {
-                App.LogError("TerminalJobObject.TryAssign(OpenProcess)", new Win32Exception());
-                return false;
-            }
+            // Pin the SafeHandle's refcount across the raw-handle use (standard interop guard
+            // against a concurrent Dispose releasing the handle mid-call).
+            processHandle.DangerousAddRef(ref addedRef);
 
-            if (!JobObjectNativeMethods.AssignProcessToJobObject(_job, process))
+            // The duplicated engine handle carries DUPLICATE_SAME_ACCESS rights, which include
+            // the PROCESS_SET_QUOTA | PROCESS_TERMINATE that AssignProcessToJobObject requires.
+            if (!JobObjectNativeMethods.AssignProcessToJobObject(_job, processHandle.DangerousGetHandle()))
             {
                 App.LogError("TerminalJobObject.TryAssign(AssignProcessToJobObject)", new Win32Exception());
                 return false;
@@ -113,9 +113,9 @@ internal sealed class TerminalJobObject : IDisposable
         }
         finally
         {
-            if (process != IntPtr.Zero)
+            if (addedRef)
             {
-                MemoryNativeMethods.CloseHandle(process);
+                processHandle.DangerousRelease();
             }
         }
     }

@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.UI.Dispatching;
+using Microsoft.Win32.SafeHandles;
 
 namespace Optimus.Interop;
 
@@ -149,13 +150,30 @@ internal sealed unsafe class EngineHandle : IDisposable
 
     /// <summary>
     /// The Windows process id of the spawned ConPTY child, or 0 when unavailable (no shell
-    /// spawned yet / spawn failed). Valid as soon as <see cref="SpawnShell"/> returns — used
-    /// to enroll the child in a per-terminal <see cref="TerminalJobObject"/> (plan U4).
+    /// spawned yet / spawn failed / child exited). Valid as soon as <see cref="SpawnShell"/>
+    /// returns. <b>Diagnostics/measurement only</b> (read-only uses like GetProcessMemoryInfo
+    /// where PID reuse is low-stakes) — Job Object enrollment must use
+    /// <see cref="ChildProcessHandle"/>, which cannot suffer PID recycling (plan U4 review fix).
     /// </summary>
     public uint ChildPid()
     {
         ThrowIfDisposed();
         return NativeMethods.optimus_engine_child_pid(_engine);
+    }
+
+    /// <summary>
+    /// A handle to the spawned ConPTY child process, or <c>null</c> when unavailable. The
+    /// native side returns a <b>fresh duplicate per call</b>; the returned
+    /// <see cref="SafeProcessHandle"/> owns that duplicate, so disposing it never invalidates
+    /// the engine's own internal handle. Valid as soon as <see cref="SpawnShell"/> returns —
+    /// used to enroll the child in a per-terminal <see cref="TerminalJobObject"/> without an
+    /// <c>OpenProcess(pid)</c> (eliminates the PID-reuse TOCTOU; plan U4 review fix).
+    /// </summary>
+    public SafeProcessHandle? ChildProcessHandle()
+    {
+        ThrowIfDisposed();
+        nuint handle = NativeMethods.optimus_engine_child_process_handle(_engine);
+        return handle == 0 ? null : new SafeProcessHandle((IntPtr)handle, ownsHandle: true);
     }
 
     /// <summary>Send already-resolved input text (layout/IME/paste) to the shell.</summary>

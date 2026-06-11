@@ -167,21 +167,28 @@ public sealed partial class TerminalPane : UserControl, ISurface
     {
         try
         {
-            uint pid = _engine?.ChildPid() ?? 0;
-            if (pid == 0)
+            // Enroll by process HANDLE, never by PID: the engine returns a duplicated handle it
+            // obtained at spawn, so a recycled PID can never enroll (and later kill, via
+            // KILL_ON_JOB_CLOSE) an unrelated process. The duplicate is ours to close — job
+            // membership persists after the handle closes (plan U4 review fix).
+            using Microsoft.Win32.SafeHandles.SafeProcessHandle? child = _engine?.ChildProcessHandle();
+            if (child is null)
             {
                 return;
             }
 
             // 2 × budget: the budget is the calibrated *typical* cost; the hard cap only has to
             // stop runaways, not normal variance. Seed budget (200 MB) when the governor is down.
+            // NOTE (accepted as designed): the limit is fixed at the spawn-time budget — live jobs
+            // do not track later recalibration. Intentional MVP posture; recalibrated budgets
+            // apply to terminals spawned afterwards.
             ulong budget = App.Capacity?.PerTerminalBudgetBytes ?? CapacityModel.SeedBudgetBytes;
-            TerminalJobObject? job = TerminalJobObject.TryCreate(2 * budget);
+            TerminalJobObject? job = TerminalJobObject.TryCreate(checked(2 * budget));
             if (job is null)
             {
                 return;
             }
-            if (!job.TryAssign((int)pid))
+            if (!job.TryAssign(child))
             {
                 job.Dispose();
                 return;

@@ -292,7 +292,9 @@ public sealed class CapacityModel
     private static int FloorTerminals(ulong safeZone, ulong budget)
         => (int)Math.Min(int.MaxValue, safeZone / budget);
 
-    /// <summary>Nearest-rank P75.</summary>
+    /// <summary>Nearest-rank P75. ACCEPTED AS DESIGNED: with the minimum 3 samples the nearest
+    /// rank is the maximum — deliberately conservative (a high budget tightens the cap; the
+    /// safe zone must never be sized off an optimistic per-terminal cost).</summary>
     private static ulong Percentile75(IEnumerable<ulong> samples)
     {
         ulong[] sorted = samples.OrderBy(s => s).ToArray();

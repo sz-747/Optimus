@@ -102,6 +102,9 @@ public partial class App : Application
         catch (Exception ex)
         {
             LogError("App.StartCapacityGovernor", ex);
+            // Order matters: dispose the ticker FIRST (it unregisters + drains the thread-pool
+            // wait on the provider's notification handle), THEN the provider (which closes that
+            // handle). The reverse order would let an in-flight callback touch a closed handle.
             _capacityTicker?.Dispose();
             _capacityTicker = null;
             _capacityProvider?.Dispose();

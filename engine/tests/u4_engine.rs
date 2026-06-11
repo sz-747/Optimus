@@ -67,6 +67,35 @@ fn spawned_shell_reports_nonzero_child_pid() {
 }
 
 #[test]
+fn child_process_handle_is_published_after_spawn() {
+    let mut engine = Engine::new(EngineOptions::default());
+
+    // Before any spawn, the handle contract mirrors the PID contract: 0 = unavailable.
+    assert_eq!(engine.child_process_handle(), 0, "handle must be 0 before spawn");
+
+    // Long-lived child so the handle is observably a live process right after spawn.
+    engine
+        .spawn_shell("cmd.exe /c ping -n 30 127.0.0.1 > NUL", None)
+        .expect("spawn shell");
+
+    // spawn_shell is synchronous (render thread publishes before replying), so a duplicated,
+    // caller-owned handle must be available immediately. Each call duplicates afresh, so two
+    // calls both succeed and yield distinct live handles. (The duplicates leak in this test;
+    // the test process exits right after, which is fine.)
+    let first = engine.child_process_handle();
+    let second = engine.child_process_handle();
+    assert_ne!(first, 0, "spawned engine must return a duplicated child process handle");
+    assert_ne!(second, 0, "every call must yield a fresh duplicate");
+    assert_ne!(first, second, "simultaneously live duplicates must be distinct handles");
+
+    // Engine drop runs teardown, which clears the published PID/handle and closes the
+    // engine-owned duplicate before the ConPty (and its original handle) is dropped.
+    // (Clearing also happens on PTY-reader EOF, but EOF timing after a child exit is
+    // conhost-dependent — teardown is the deterministic clear path, exercised here.)
+    drop(engine);
+}
+
+#[test]
 fn resize_before_spawn_is_honored() {
     let mut engine = Engine::new(EngineOptions::default());
     // Resize without a panel/surface must not error (renderer absent) and should set the grid.

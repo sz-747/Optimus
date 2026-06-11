@@ -23,6 +23,7 @@ internal sealed class CapacityIndicatorView : StackPanel
     private readonly TextBlock _label;
     private readonly Grid _track;
     private readonly Rectangle _fill;
+    private bool _hooked;
 
     public CapacityIndicatorView(CapacityIndicatorViewModel vm)
     {
@@ -49,12 +50,43 @@ internal sealed class CapacityIndicatorView : StackPanel
             Background = Tokens.Hairline,
             Children = { _fill },
         };
-        _track.SizeChanged += (_, _) => UpdateFillWidth();
         Children.Add(_track);
 
-        _vm.PropertyChanged += (_, _) => Render();
+        // Subscription lifetime (review fix): the VM is owned by the (longer-lived) SidebarView,
+        // so a forever-subscription would root this view past its visual lifetime. Toggle the
+        // handlers symmetrically on Unloaded/Loaded (idempotent — WinUI re-fires both on
+        // re-parent), re-rendering on reattach so no state change is missed while unloaded.
+        Hook();
+        Loaded += (_, _) => Hook();
+        Unloaded += (_, _) => Unhook();
+    }
+
+    private void Hook()
+    {
+        if (_hooked)
+        {
+            return;
+        }
+        _hooked = true;
+        _vm.PropertyChanged += OnVmPropertyChanged;
+        _track.SizeChanged += OnTrackSizeChanged;
         Render();
     }
+
+    private void Unhook()
+    {
+        if (!_hooked)
+        {
+            return;
+        }
+        _hooked = false;
+        _vm.PropertyChanged -= OnVmPropertyChanged;
+        _track.SizeChanged -= OnTrackSizeChanged;
+    }
+
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => Render();
+
+    private void OnTrackSizeChanged(object sender, SizeChangedEventArgs e) => UpdateFillWidth();
 
     private void Render()
     {

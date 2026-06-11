@@ -21,6 +21,7 @@ public sealed class CapacityIndicatorViewModel : INotifyPropertyChanged, IDispos
     private readonly CapacityModel? _model;
     private readonly Action<Action> _dispatch;
     private CapacityState? _state;
+    private bool _attached;
     private bool _disposed;
 
     /// <param name="model">The capacity governor, or <c>null</c> when it failed to start.</param>
@@ -34,7 +35,40 @@ public sealed class CapacityIndicatorViewModel : INotifyPropertyChanged, IDispos
         {
             _state = model.State;
             model.StateChanged += OnStateChanged;
+            _attached = true;
         }
+    }
+
+    /// <summary>
+    /// Re-subscribe to the model's <see cref="CapacityModel.StateChanged"/> after a
+    /// <see cref="Detach"/> (the owning view re-Loaded) and refresh from the model's current
+    /// state so nothing missed while detached is lost. No-op when already attached, disposed,
+    /// or model-less.
+    /// </summary>
+    public void Attach()
+    {
+        if (_disposed || _attached || _model is null)
+        {
+            return;
+        }
+        _attached = true;
+        _model.StateChanged += OnStateChanged;
+        OnStateChanged(_model.State);
+    }
+
+    /// <summary>
+    /// Unsubscribe from the app-lifetime model while the owning view is unloaded (review fix:
+    /// the subscription would otherwise root the view forever). Symmetric with
+    /// <see cref="Attach"/> so WinUI Unloaded/Loaded re-parent cycles are safe. Idempotent.
+    /// </summary>
+    public void Detach()
+    {
+        if (!_attached || _model is null)
+        {
+            return;
+        }
+        _attached = false;
+        _model.StateChanged -= OnStateChanged;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -71,11 +105,8 @@ public sealed class CapacityIndicatorViewModel : INotifyPropertyChanged, IDispos
         {
             return;
         }
+        Detach();
         _disposed = true;
-        if (_model is not null)
-        {
-            _model.StateChanged -= OnStateChanged;
-        }
     }
 
     private void OnStateChanged(CapacityState state) => _dispatch(() =>

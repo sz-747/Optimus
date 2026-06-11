@@ -38,6 +38,9 @@ internal sealed class SidebarView : Grid
 
     private readonly StackPanel _rows;
     private readonly CapacityIndicatorViewModel _capacity;
+    private readonly Button _newButton;
+    private readonly TextBlock _capHint;
+    private bool _capacityHooked;
 
     /// <summary>Raised when the user clicks a row body — select/focus that workspace.</summary>
     public event Action<WorkspaceId>? WorkspaceInvoked;
@@ -71,7 +74,7 @@ internal sealed class SidebarView : Grid
         // and never disables the button.
         _capacity = new CapacityIndicatorViewModel(App.Capacity, Dispatch);
 
-        var newButton = new Button
+        _newButton = new Button
         {
             Content = "+  New workspace",
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -80,48 +83,82 @@ internal sealed class SidebarView : Grid
             BorderBrush = TransparentRow,
             Foreground = MetaText,
             Margin = new Thickness(4),
-            IsEnabled = !_capacity.IsAtCap,
         };
-        newButton.Click += (_, _) => NewWorkspaceRequested?.Invoke();
+        _newButton.Click += (_, _) => NewWorkspaceRequested?.Invoke();
 
-        var capHint = new TextBlock
+        _capHint = new TextBlock
         {
             Foreground = Tokens.TextMuted,
             FontSize = Tokens.FontMeta,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(10, 0, 10, 8),
-            Text = _capacity.HintText ?? "",
-            Visibility = _capacity.HintText is null ? Visibility.Collapsed : Visibility.Visible,
-        };
-
-        _capacity.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName is nameof(CapacityIndicatorViewModel.IsAtCap))
-            {
-                newButton.IsEnabled = !_capacity.IsAtCap;
-            }
-            else if (e.PropertyName is nameof(CapacityIndicatorViewModel.HintText))
-            {
-                capHint.Text = _capacity.HintText ?? "";
-                capHint.Visibility = _capacity.HintText is null ? Visibility.Collapsed : Visibility.Visible;
-            }
         };
 
         var footer = new StackPanel { Orientation = Microsoft.UI.Xaml.Controls.Orientation.Vertical };
         footer.Children.Add(new CapacityIndicatorView(_capacity));
-        footer.Children.Add(newButton);
-        footer.Children.Add(capHint);
+        footer.Children.Add(_newButton);
+        footer.Children.Add(_capHint);
         Grid.SetRow(footer, 1);
         Children.Add(footer);
+
+        // Subscription lifetime (review fix): the sidebar is effectively an app-lifetime
+        // singleton inside WorkspaceHost, but the capacity model outlives any visual tree, so
+        // the VM↔model hookup is toggled symmetrically with the view's tree membership —
+        // Unloaded detaches (no leak, no updates into an unloaded tree), Loaded reattaches and
+        // refreshes from the model's current state. Both are idempotent (re-parent safe).
+        HookCapacity();
+        Loaded += (_, _) => HookCapacity();
+        Unloaded += (_, _) => UnhookCapacity();
+    }
+
+    private void HookCapacity()
+    {
+        if (_capacityHooked)
+        {
+            return;
+        }
+        _capacityHooked = true;
+        _capacity.PropertyChanged += OnCapacityPropertyChanged;
+        _capacity.Attach();
+        RefreshCapacityChrome();
+    }
+
+    private void UnhookCapacity()
+    {
+        if (!_capacityHooked)
+        {
+            return;
+        }
+        _capacityHooked = false;
+        _capacity.Detach();
+        _capacity.PropertyChanged -= OnCapacityPropertyChanged;
+    }
+
+    private void OnCapacityPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(CapacityIndicatorViewModel.IsAtCap)
+            or nameof(CapacityIndicatorViewModel.HintText))
+        {
+            RefreshCapacityChrome();
+        }
+    }
+
+    private void RefreshCapacityChrome()
+    {
+        _newButton.IsEnabled = !_capacity.IsAtCap;
+        _capHint.Text = _capacity.HintText ?? "";
+        _capHint.Visibility = _capacity.HintText is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>Marshal a capacity state change onto this view's UI thread (StateChanged fires on
-    /// the 1 Hz ticker thread, plan U3).</summary>
+    /// the 1 Hz ticker thread, plan U3). If the enqueue fails (dispatcher shutting down / not
+    /// available), the update is DROPPED — never run inline, which would mutate WinUI objects
+    /// off-thread (review fix). The next successful state change repaints.</summary>
     private void Dispatch(Action action)
     {
         if (DispatcherQueue is null || !DispatcherQueue.TryEnqueue(() => action()))
         {
-            action();
+            System.Diagnostics.Debug.WriteLine("[capacity] dropped a state update: dispatcher unavailable");
         }
     }
 

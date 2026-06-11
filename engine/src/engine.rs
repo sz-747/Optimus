@@ -8,13 +8,15 @@
 
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, Once};
 use std::thread::JoinHandle;
 
 use termwiz::input::{KeyCode, Modifiers};
 use wezterm_term::{Terminal, TerminalSize};
+use windows::Win32::Foundation::{CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE};
+use windows::Win32::System::Threading::GetCurrentProcess;
 
 use crate::ffi::events::{event_kind, EngineOptions, EventSink};
 use crate::pty::{default_shell, ConPty};
@@ -89,9 +91,17 @@ pub struct Engine {
     /// Shared with the render thread's `AlertHandler`; updated by `set_event_callback`.
     sink: SharedSink,
     /// PID of the spawned ConPTY child, written by the render thread on a successful
-    /// `SpawnShell` (before the synchronous reply), 0 until then. Read by
-    /// `optimus_engine_child_pid` so the host can enroll the child in a Job Object (U4).
+    /// `SpawnShell` (before the synchronous reply), 0 until then; reset to 0 on child exit
+    /// (PTY reader EOF) and on teardown, honoring the "0 when unavailable" contract. Read by
+    /// `optimus_engine_child_pid` — diagnostics/measurement only; Job Object enrollment must
+    /// use [`Engine::child_process_handle`] (PID reuse, see below).
     child_pid: Arc<AtomicU32>,
+    /// Raw HANDLE value of an **engine-owned duplicate** of the ConPTY child's process handle,
+    /// 0 when unavailable. Written together with `child_pid`; closed + zeroed on child exit
+    /// and on teardown (the render thread owns the stored duplicate). `optimus_engine_child_process_handle`
+    /// re-duplicates it per call so the host can `AssignProcessToJobObject` without an
+    /// OpenProcess(pid) — immune to PID recycling.
+    child_process_handle: Arc<AtomicUsize>,
 }
 
 impl Engine {
@@ -99,14 +109,25 @@ impl Engine {
         let options = options.normalized();
         let sink: SharedSink = Arc::new(Mutex::new(None));
         let child_pid = Arc::new(AtomicU32::new(0));
+        let child_process_handle = Arc::new(AtomicUsize::new(0));
         let (tx, rx) = channel::<RenderCmd>();
 
         let render_sink = Arc::clone(&sink);
         let render_child_pid = Arc::clone(&child_pid);
+        let render_child_handle = Arc::clone(&child_process_handle);
         let render_tx = tx.clone();
         let render_thread = std::thread::Builder::new()
             .name("optimus-render".into())
-            .spawn(move || render_loop(options, rx, render_tx, render_sink, render_child_pid))
+            .spawn(move || {
+                render_loop(
+                    options,
+                    rx,
+                    render_tx,
+                    render_sink,
+                    render_child_pid,
+                    render_child_handle,
+                )
+            })
             .expect("spawn render thread");
 
         Self {
@@ -115,6 +136,7 @@ impl Engine {
             render_thread: Some(render_thread),
             sink,
             child_pid,
+            child_process_handle,
         }
     }
 
@@ -123,6 +145,15 @@ impl Engine {
     /// synchronous reply, so it is valid as soon as `spawn_shell` returns `Ok`.
     pub fn child_pid(&self) -> u32 {
         self.child_pid.load(Ordering::SeqCst)
+    }
+
+    /// A **fresh duplicate** of the ConPTY child's process handle (raw HANDLE value), or 0
+    /// when unavailable. The caller owns the returned duplicate and must close it; the engine
+    /// keeps its own internal handle (closed on child exit / teardown), so closing the
+    /// returned value never invalidates engine state. Use this — not [`Engine::child_pid`] +
+    /// `OpenProcess` — for Job Object enrollment: a handle cannot suffer PID reuse.
+    pub fn child_process_handle(&self) -> usize {
+        duplicate_handle_value(self.child_process_handle.load(Ordering::SeqCst))
     }
 
     /// Register the host-event callback (notifications/title/bell/cwd/exit).
@@ -289,6 +320,9 @@ struct RenderState {
     self_tx: Sender<RenderCmd>,
     /// Shared with the owning [`Engine`]; stores the ConPTY child's PID on spawn (U4).
     child_pid: Arc<AtomicU32>,
+    /// Shared with the owning [`Engine`]; stores an engine-owned duplicate of the child's
+    /// process handle on spawn, closed + zeroed on child exit / teardown.
+    child_process_handle: Arc<AtomicUsize>,
 
     terminal: Option<Terminal>,
     reader: Option<JoinHandle<()>>,
@@ -349,6 +383,7 @@ fn render_loop(
     self_tx: Sender<RenderCmd>,
     sink: SharedSink,
     child_pid: Arc<AtomicU32>,
+    child_process_handle: Arc<AtomicUsize>,
 ) {
     install_render_panic_logger();
 
@@ -357,6 +392,7 @@ fn render_loop(
         sink,
         self_tx,
         child_pid,
+        child_process_handle,
         terminal: None,
         reader: None,
         pty: None,
@@ -529,6 +565,9 @@ impl RenderState {
             }
             RenderCmd::PtyEof => {
                 let code = self.pty.as_ref().and_then(ConPty::exit_code).unwrap_or(0);
+                // The child exited: clear the published PID + handle so the FFI honors its
+                // "0 when unavailable" contract (a stale PID could be recycled by the OS).
+                self.clear_child();
                 if let Ok(guard) = self.sink.lock() {
                     if let Some(sink) = guard.as_ref() {
                         sink.emit_scalar(event_kind::CHILD_EXIT, code as i64);
@@ -607,9 +646,10 @@ impl RenderState {
     fn spawn_shell(&mut self, cmdline: &str, cwd: Option<&str>) -> Result<(), String> {
         let pty = ConPty::spawn(cmdline, cwd, self.cols, self.rows)
             .map_err(|e| format!("spawn shell failed: {e}"))?;
-        // Publish the child PID before the synchronous reply unblocks the FFI caller, so
-        // `optimus_engine_child_pid` is valid the moment `spawn_shell` returns Ok (U4).
-        self.child_pid.store(pty.child_pid(), Ordering::SeqCst);
+        // Publish the child PID + an engine-owned duplicate of its process handle before the
+        // synchronous reply unblocks the FFI caller, so `optimus_engine_child_pid` /
+        // `optimus_engine_child_process_handle` are valid the moment `spawn_shell` returns Ok (U4).
+        self.publish_child(&pty);
 
         let size = TerminalSize {
             rows: self.rows as usize,
@@ -848,6 +888,9 @@ impl RenderState {
     /// Ordered teardown (plan §7.2): close the pseudoconsole first so the blocked reader hits
     /// EOF, then join the reader, then drop the terminal/PTY/surface.
     fn teardown(&mut self) {
+        // Clear the published child identity before the PTY (and its original process handle)
+        // goes away, honoring the FFI's "0 when unavailable" contract on engine drop.
+        self.clear_child();
         if let Some(pty) = self.pty.as_ref() {
             pty.shutdown();
         }
@@ -857,6 +900,57 @@ impl RenderState {
         self.terminal = None;
         self.pty = None;
         self.renderer = None;
+    }
+
+    /// Publish the freshly spawned child's PID and an **engine-owned duplicate** of its process
+    /// handle (the duplicate outlives the `ConPty`'s own handle, so the FFI can re-duplicate it
+    /// at any time without racing PTY teardown). Any previously stored duplicate is closed.
+    fn publish_child(&self, pty: &ConPty) {
+        self.child_pid.store(pty.child_pid(), Ordering::SeqCst);
+        let dup = duplicate_handle_value(pty.child_process_handle().0 as usize);
+        close_handle_value(self.child_process_handle.swap(dup, Ordering::SeqCst));
+    }
+
+    /// Reset the published child identity to "unavailable" (PID 0 / handle 0) and close the
+    /// engine-owned duplicate. Called on child exit (PTY reader EOF) and on teardown.
+    fn clear_child(&self) {
+        self.child_pid.store(0, Ordering::SeqCst);
+        close_handle_value(self.child_process_handle.swap(0, Ordering::SeqCst));
+    }
+}
+
+/// Duplicate a raw process-HANDLE value within the current process (`DUPLICATE_SAME_ACCESS`).
+/// Returns the duplicate's raw value, or 0 on failure / when `raw` is 0. The caller owns the
+/// returned handle and must close it via [`close_handle_value`] (or hand ownership on).
+fn duplicate_handle_value(raw: usize) -> usize {
+    if raw == 0 {
+        return 0;
+    }
+    let mut dup = HANDLE::default();
+    // SAFETY: `raw` is a live handle value owned by this process; GetCurrentProcess is a
+    // pseudo-handle that needs no closing.
+    let ok = unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            HANDLE(raw as *mut c_void),
+            GetCurrentProcess(),
+            &mut dup,
+            0,
+            false,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    match ok {
+        Ok(()) => dup.0 as usize,
+        Err(_) => 0,
+    }
+}
+
+/// Close a raw HANDLE value previously produced by [`duplicate_handle_value`]. No-op on 0.
+fn close_handle_value(raw: usize) {
+    if raw != 0 {
+        // SAFETY: `raw` is an owned, live handle value (our own duplicate).
+        let _ = unsafe { CloseHandle(HANDLE(raw as *mut c_void)) };
     }
 }
 

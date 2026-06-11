@@ -146,8 +146,11 @@ pub unsafe extern "C" fn optimus_engine_spawn_shell(
 }
 
 /// The Windows process id of the spawned ConPTY child, or `0` when unavailable (no shell
-/// spawned yet, spawn failed, or null engine). Valid as soon as [`optimus_engine_spawn_shell`]
-/// returns `0`. The host uses it to enroll the child in a per-terminal Job Object (plan U4).
+/// spawned yet, spawn failed, child exited, or null engine). Valid as soon as
+/// [`optimus_engine_spawn_shell`] returns `0`; reset to 0 when the child exits or the engine
+/// tears down. **Diagnostics/measurement only** (e.g. `GetProcessMemoryInfo` calibration where
+/// PID reuse is low-stakes) — Job Object enrollment must use
+/// [`optimus_engine_child_process_handle`] instead, which cannot suffer PID recycling.
 ///
 /// # Safety
 /// `engine` must be a live handle from [`optimus_engine_create`] (or null → returns 0).
@@ -158,6 +161,29 @@ pub unsafe extern "C" fn optimus_engine_child_pid(engine: *mut Engine) -> u32 {
             return 0;
         };
         engine.child_pid()
+    })
+}
+
+/// A Windows HANDLE to the spawned ConPTY child process, or `0` when unavailable (no live
+/// child, duplication failed, or null engine). Returned as `usize` (the raw HANDLE value);
+/// the engine DLL runs in-process with the host, so the value is directly usable.
+///
+/// **Ownership:** every call returns a **fresh duplicate** (`DuplicateHandle`) that the
+/// **caller owns** and must close (`CloseHandle` / a C# `SafeProcessHandle`). The engine keeps
+/// its own internal handle (closed on child exit / engine destroy), so disposing the returned
+/// duplicate never invalidates engine state. The host uses this — never `OpenProcess(pid)` —
+/// to `AssignProcessToJobObject`, eliminating the PID-reuse TOCTOU between reading the PID and
+/// assigning the job (plan U4 review fix).
+///
+/// # Safety
+/// `engine` must be a live handle from [`optimus_engine_create`] (or null → returns 0).
+#[no_mangle]
+pub unsafe extern "C" fn optimus_engine_child_process_handle(engine: *mut Engine) -> usize {
+    ffi::guard(0, || {
+        let Some(engine) = (unsafe { engine.as_ref() }) else {
+            return 0;
+        };
+        engine.child_process_handle()
     })
 }
 

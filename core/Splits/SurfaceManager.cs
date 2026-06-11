@@ -82,6 +82,10 @@ public sealed class SurfaceManager : IDisposable
         // The engine spawns its child lazily (TerminalPane.Configure), so no PID exists at this
         // layer yet — commit with pid 0 to settle the slot accounting; the pane reports the real
         // PID's memory via RecordMeasurement during calibration (U4).
+        // ACCEPTED AS DESIGNED: capacity is committed at *surface creation* — the surface is the
+        // capacity unit, and its slot is freed only on surface removal (DisposeSurface/Dispose →
+        // Release). A pane that never configures (never spawns a shell) still holds its slot;
+        // that is intentional: the slot accounts for the surface's eventual cost.
         if (token is not null)
         {
             _capacity!.Commit(token, pid: 0);

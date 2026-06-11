@@ -179,6 +179,14 @@ impl ConPty {
         self.proc_info.dwProcessId
     }
 
+    /// The child's process HANDLE. **Borrowed**: owned by this `ConPty` and closed in `Drop`,
+    /// so callers that need it to outlive the PTY must `DuplicateHandle` it. Used by the engine
+    /// to publish a PID-reuse-proof identity for Job Object enrollment (the PID alone is a
+    /// TOCTOU hazard: it can be recycled between read and `AssignProcessToJobObject`).
+    pub fn child_process_handle(&self) -> HANDLE {
+        self.proc_info.hProcess
+    }
+
     /// Whether the spawned shell process is still running. The engine uses this to detect
     /// the shell exiting (so it can close the pane); `STILL_ACTIVE` (259) means running.
     pub fn child_alive(&self) -> bool {

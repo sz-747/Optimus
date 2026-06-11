@@ -43,6 +43,9 @@ internal sealed class Win32CapacityProvider : ICapacityProvider, IDisposable
     }
 
     /// <inheritdoc/>
+    /// <remarks>After <see cref="Dispose"/> this reads conservatively as <c>false</c>:
+    /// <see cref="NotificationHandle"/> returns zero under the disposal guard, so the closed
+    /// handle is never touched.</remarks>
     public bool IsLowMemorySignaled
     {
         get
@@ -106,8 +109,22 @@ internal sealed class Win32CapacityProvider : ICapacityProvider, IDisposable
         }
     }
 
-    /// <summary>Raised by <see cref="CapacityTicker"/> when the OS notification fires.</summary>
-    internal void RaiseLowMemorySignal() => LowMemorySignal?.Invoke();
+    /// <summary>
+    /// Raised by <see cref="CapacityTicker"/> when the OS notification fires. Safe no-op after
+    /// <see cref="Dispose"/>: the ticker is disposed before the provider (App.xaml.cs ordering)
+    /// and drains in-flight callbacks, but this guard keeps a late call harmless regardless.
+    /// </summary>
+    internal void RaiseLowMemorySignal()
+    {
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+        }
+        LowMemorySignal?.Invoke();
+    }
 
     public void Dispose()
     {
