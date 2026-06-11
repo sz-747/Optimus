@@ -40,6 +40,15 @@ near the limit → `pr-closed` red at the cap, where "New workspace" is disabled
 a plain-language reason). Capacity is the one number the user must never have to
 hunt for.
 
+> **Shipped (2026-06-10, plan U6).** `CapacityIndicatorView` sits in the sidebar
+> directly above the "+ New workspace" button: a Cascadia Mono `meta` label
+> ("X / Y terminals") over a thin fill bar (`hairline` track). Escalation maps to
+> tokens in `app/Design/Tokens.cs`: `CapacityCalm` (= `text-muted` `#8A8A8A`,
+> < 75%), `CapacityWarn` (= `git-dirty` `#D9A04E`, ≥ 75%), `CapacityCap`
+> (= `pr-closed` `#D96A6A`, at cap — button disabled with hint "Safe-zone full —
+> close a workspace to spawn more"). When the governor is unavailable the
+> indicator shows "— / — terminals" in calm grey.
+
 ## Aesthetic Direction
 - **Direction:** Industrial-utilitarian, near-black.
 - **Decoration level:** Minimal — flat surfaces, 1px hairline dividers, elevation by
@@ -174,12 +183,17 @@ added, redesign surfaces from scratch and drop semantic-color saturation ~15%.
 | 2026-06-10 | Keep Segoe UI Variable for UI; Cascadia Mono for metadata | Native, no webfonts; mono gives tabular alignment for branch/PR/status in dense rows. |
 | 2026-06-10 | Identity = stable name + stable hue (shared seed) | Conductor research: it uses city names + branch-primary labels; Optimus's focused-surface-derived title is volatile. Pairing a stable name with the RISK #1 hue gives two redundant glance channels off one seed. |
 | 2026-06-10 | Sidebar row anticipates repo-grouping | Conductor shipped flat, then added group-by-repo at scale (0.35). Designing the row to accept a collapsible repo header now avoids a retrofit later. |
+| 2026-06-10 | Capacity indicator shipped; `Tokens.cs` seeded | RAM safe-zone plan U6/U7. Indicator escalation reuses semantic hues via `CapacityCalm`/`CapacityWarn`/`CapacityCap` aliases in `app/Design/Tokens.cs` rather than inventing new colors; `Tokens.cs` becomes the (partial) central token registry. |
 
-## Implementation note (not yet applied)
-These tokens are **not yet centralized** in code. Today the literals live inline in
-four view files, several duplicated. Landing this system means introducing a single
-`ChromeTheme`/`DesignTokens` static (brushes + sizes + the identity palette + hash
-helper) and replacing the inline `Color.FromArgb` / `FontSize` literals with token
-references. RISK #1 and RISK #2 also require small behavior changes (per-workspace
-hue derivation; splitting the flash brush from the unread brush). Tracked as a
-follow-up — see the next plan/commit.
+## Implementation note (partially applied)
+`app/Design/Tokens.cs` is now the central token registry — the one place in the app
+assembly where raw hex values may live. It was seeded by the capacity indicator
+(plan U6) and currently carries: `Hairline`, `TextMuted`, `CapacityCalm`
+(= `text-muted`), `CapacityWarn` (= `git-dirty`), `CapacityCap` (= `pr-closed`),
+the `Mono` (Cascadia Mono) family, and the `caption`/`meta`/`body`/`title` font
+sizes. The remaining inline `Color.FromArgb` / `FontSize` literals in the older
+views (`SidebarView`, `PaneTabStrip`, `PaneView`, `SplitTreeView`) are **not yet
+migrated** — that migration, plus the RISK #1 / RISK #2 behavior changes
+(per-workspace hue derivation; splitting the flash brush from the unread brush),
+remains a tracked follow-up. New chrome code must consume `Tokens` and never
+introduce fresh literals.
