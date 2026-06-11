@@ -35,10 +35,10 @@ AppId={{9C2B5A14-7E0D-4B7A-9C66-0F3D2C1A8E51}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\{#AppName}
+; Per-user install: no UAC prompt. The user Programs folder is spelled out rather
+; than left to {autopf}+lowest resolution so the README's path claim is literal.
+DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
-; Per-user install: no UAC prompt, lands under %LOCALAPPDATA%\Programs\Optimus.
-; (With PrivilegesRequired=lowest, {autopf} resolves to the user Programs folder.)
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
 OutputDir=out
@@ -77,13 +77,88 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
 #endif
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
-[Registry]
-; Append {app}\bin to the *user* PATH (per-user install ⇒ never touch the machine PATH).
-; Inno has no native "append to PATH", so guard against duplicates in [Code].
-Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
-  ValueData: "{olddata};{app}\bin"; Tasks: addtopath; Check: NeedsAddPath(ExpandConstant('{app}\bin'))
-
 [Code]
+{ User-PATH handling lives here rather than in [Registry] with {olddata}: the
+  declarative append corrupts the value when Path is absent/empty (leading ';')
+  and can't be undone on uninstall. Add/remove are segment-wise, normalize
+  trailing backslashes, and only ever touch HKCU (per-user install). The
+  ChangesEnvironment=yes broadcast tells running shells to re-read it. }
+
+function SameSeg(const A, B: string): Boolean;
+var
+  NA, NB: string;
+begin
+  NA := Trim(A);
+  NB := Trim(B);
+  while (Length(NA) > 0) and (NA[Length(NA)] = '\') do SetLength(NA, Length(NA) - 1);
+  while (Length(NB) > 0) and (NB[Length(NB)] = '\') do SetLength(NB, Length(NB) - 1);
+  Result := CompareText(NA, NB) = 0;
+end;
+
+{ Rebuild Path without Dir; report whether it was present. Empty segments are
+  preserved as-is unless they match (they can't), so unrelated formatting survives. }
+function RemoveSegFromPath(const PathValue, Dir: string; var NewValue: string): Boolean;
+var
+  Seg: string;
+  I: Integer;
+begin
+  Result := False;
+  NewValue := '';
+  Seg := '';
+  for I := 1 to Length(PathValue) + 1 do
+  begin
+    if (I = Length(PathValue) + 1) or (PathValue[I] = ';') then
+    begin
+      if (Trim(Seg) <> '') and SameSeg(Seg, Dir) then
+        Result := True
+      else if Seg <> '' then
+      begin
+        if NewValue <> '' then NewValue := NewValue + ';';
+        NewValue := NewValue + Seg;
+      end;
+      Seg := '';
+    end
+    else
+      Seg := Seg + PathValue[I];
+  end;
+end;
+
+procedure AddToUserPath(const Dir: string);
+var
+  V, Ignored: string;
+begin
+  if not RegQueryStringValue(HKCU, 'Environment', 'Path', V) then
+    V := '';
+  if RemoveSegFromPath(V, Dir, Ignored) then
+    exit; { already present (any trailing-backslash spelling) }
+  if (V <> '') and (V[Length(V)] <> ';') then
+    V := V + ';';
+  V := V + Dir;
+  RegWriteExpandStringValue(HKCU, 'Environment', 'Path', V);
+end;
+
+procedure RemoveFromUserPath(const Dir: string);
+var
+  V, NewV: string;
+begin
+  if not RegQueryStringValue(HKCU, 'Environment', 'Path', V) then
+    exit;
+  if RemoveSegFromPath(V, Dir, NewV) then
+    RegWriteExpandStringValue(HKCU, 'Environment', 'Path', NewV);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('addtopath') then
+    AddToUserPath(ExpandConstant('{app}\bin'));
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    RemoveFromUserPath(ExpandConstant('{app}\bin'));
+end;
+
 { WebView2 Evergreen runtime detection — THE CONTRACT p6 U4's in-app check mirrors.
   The runtime is present iff one of these registry values exists with a non-empty,
   non-"0.0.0.0" pv (version) string:
@@ -98,17 +173,4 @@ begin
       and (Version <> '') and (Version <> '0.0.0.0')) or
     (RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version)
       and (Version <> '') and (Version <> '0.0.0.0'));
-end;
-
-function NeedsAddPath(Param: string): Boolean;
-var
-  OrigPath: string;
-begin
-  if not RegQueryStringValue(HKCU, 'Environment', 'Path', OrigPath) then
-  begin
-    Result := True;
-    exit;
-  end;
-  { Already present (delimited match) ⇒ skip. }
-  Result := Pos(';' + Lowercase(Param) + ';', ';' + Lowercase(OrigPath) + ';') = 0;
 end;
