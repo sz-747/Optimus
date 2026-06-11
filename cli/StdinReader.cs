@@ -36,11 +36,13 @@ public static class StdinReader
     public static string? ReadAvailable(TextReader reader, TimeSpan firstByteTimeout, TimeSpan drainTimeout)
     {
         var buffer = new StringBuilder();
-        using var firstData = new ManualResetEventSlim();
-        using var finished = new ManualResetEventSlim();
+        // Deliberately not disposed: the reader task can outlive this method (a
+        // blocked Read may complete much later and still call Set), so disposing
+        // here would race it into ObjectDisposedException. One leaked event pair
+        // in a process that exits right after is the cheaper trade.
+        var firstData = new ManualResetEventSlim();
+        var finished = new ManualResetEventSlim();
 
-        // The reader task can outlive this method when stdin never produces data or
-        // EOF; that is fine for a short-lived CLI process — it dies with the process.
         Task.Run(() =>
         {
             try
