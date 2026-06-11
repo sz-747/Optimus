@@ -15,7 +15,12 @@ public static class Program
 {
     public static int Main(string[] args)
     {
-        string? stdin = Console.IsInputRedirected ? Console.In.ReadToEnd() : null;
+        string? stdin = Console.IsInputRedirected
+            ? StdinReader.ReadAvailable(
+                Console.In,
+                StdinReader.DefaultFirstByteTimeout,
+                StdinReader.DefaultDrainTimeout)
+            : null;
 
         object parsed = CliParser.Parse(args, Environment.GetEnvironmentVariable, stdin);
         if (parsed is CliError error)

@@ -82,13 +82,15 @@ Everything earlier than Phase 6 is shipped; do **not** re-execute it.
   re-landed as PR #4)
   _Pure docs; no test impact. Mirrors the closeout done for the RAM safe-zone plan in commit `bbb7fcf`._
 
-- [ ] **res U2** — Fix CLI `optimus.exe` stdin hang when stdin is redirected but
+- [x] **res U2** — Fix CLI `optimus.exe` stdin hang when stdin is redirected but
   open. Replace the blocking `Console.In.ReadToEnd()` with a peek/read-with-
   timeout pattern so the CLI no longer needs `< NUL` as a workaround. `║`
   Worktree: `wt-res-u2-cli-stdin` · Branch: `fix/res-u2-cli-stdin-hang`
   Files: `cli/Program.cs` (~line 18) · add coverage in `tests/Cli/` if a test
   project exists; otherwise add a small repro doc under `docs/runbooks/`.
-  PR: _none yet_ · Merge: _—_
+  PR: #5 · Merge: content commit `96f9650` (new `cli/StdinReader.cs` +
+  `tests/Cli/StdinReaderTests.cs`; surprise: PowerShell 5.1 parents push a lone
+  BOM onto the redirected stdin pipe, handled via quiet-window drain + BOM strip)
   _Surfaced by the RAM safe-zone live smoke. Verify via `Get-Content NUL | optimus.exe ...` and `echo hi | optimus.exe ...`._
 
 ### Wave 1 — Engine, lifecycle, and packaging spike  (mixed)
@@ -217,5 +219,6 @@ A red gate is the end of the unit; fix it before opening a PR.
 ## Session log (append-only)
 
 - 2026-06-11 · chore/res-u1-phase2-status · res U1 · PR #4 · Phase 2 plan flipped to completed with Outcome block (PR #1, `30d97ab`); pure docs, no gates run per unit note. PR #3 mis-merged into stale GitHub default branch `feat/phase1-walking-skeleton`; repo default flipped to `main`, work re-landed as PR #4.
+- 2026-06-11 · fix/res-u2-cli-stdin-hang · res U2 · PR #5 · CLI stdin hang fixed via `StdinReader` (500ms first-byte timeout → null, 150ms quiet-window drain, 2s hard cap, leading-BOM strip). Gates: dotnet 244 (floor 238 + 6 new), cargo 19, app build 0W/0E. Live smoke: open-silent stdin exits ~300ms (was: infinite hang). Surprise (R6): PowerShell 5.1 `Process.Start` pushes a lone U+FEFF onto the redirected stdin pipe even when nothing is written — "silent" pipes from .NET Framework parents are not byte-silent. Codex review caught a use-after-dispose race on the reader events (fixed in `96f9650`).
 
 Format per entry: `- YYYY-MM-DD · <session-id-or-branch> · <unit-id> · PR #<n> · <outcome>`
