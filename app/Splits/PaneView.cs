@@ -33,10 +33,13 @@ internal sealed class PaneView : UserControl
     // constant — only the brush toggles — so gaining/losing focus never reflows the pane.
     private const double FocusBorderThickness = 2.0;
 
-    // Notification pane-flash (plan Phase 3 U7): briefly paint the pane border when a notification
-    // lands on it, then revert to the focus-state border. Per DESIGN.md the flash IS the attention
-    // pulse — same hue as the focused border, layered briefly. Colour-only on the existing
-    // constant-thickness border slot, so it never reflows the pane (mirrors the focus-outline model).
+    // Notification pane-flash (plan Phase 3 U7): briefly paint an attention ring when a
+    // notification lands on the pane, then hide it. Per DESIGN.md the flash is the attention pulse
+    // "layered briefly over" whatever border the pane already shows — so it lives on a dedicated
+    // overlay ring just inside the focus border, not on the focus border itself. A focused pane's
+    // border is already attention-teal; reusing that slot would make the flash invisible exactly
+    // when the notification targets the pane you're looking at (codex review, PR #8). The overlay
+    // doesn't participate in layout, so the flash still never reflows the pane.
     private static readonly TimeSpan FlashDuration = TimeSpan.FromMilliseconds(700);
 
     private readonly PaneId _paneId;
@@ -49,6 +52,16 @@ internal sealed class PaneView : UserControl
     private readonly PaneTabStrip _strip = new();
     private readonly Grid _contentHost = new() { Background = Tokens.Surface0 };
     private readonly Grid _root = new();
+
+    // The flash overlay: a hit-test-invisible ring spanning both rows, drawn just inside the focus
+    // border. Transparent except during a flash, when it paints attention-teal — visibly thickening
+    // the frame of a focused pane and outlining an unfocused one.
+    private readonly Border _flashOverlay = new()
+    {
+        BorderThickness = new Thickness(FocusBorderThickness),
+        BorderBrush = Tokens.Transparent,
+        IsHitTestVisible = false,
+    };
 
     // Surfaces currently parented in this pane's content host, plus the title handler we attached to
     // each (so we can detach on removal). Keyed by surface id.
@@ -91,8 +104,11 @@ internal sealed class PaneView : UserControl
         _root.BorderBrush = Tokens.Transparent;
         Grid.SetRow(_strip, 0);
         Grid.SetRow(_contentHost, 1);
+        Grid.SetRow(_flashOverlay, 0);
+        Grid.SetRowSpan(_flashOverlay, 2);
         _root.Children.Add(_strip);
         _root.Children.Add(_contentHost);
+        _root.Children.Add(_flashOverlay); // last child → composites above strip and content
         Content = _root;
     }
 
@@ -223,22 +239,23 @@ internal sealed class PaneView : UserControl
     public void RefreshHeaders() => RenderStrip(_controller.Tabs(_paneId), _controller.SelectedTab(_paneId));
 
     /// <summary>
-    /// Briefly flash this pane's border to signal a notification landed on it (plan Phase 3 U7).
-    /// Reverts to the current focus-state border after <see cref="FlashDuration"/>.
+    /// Briefly show the attention overlay ring to signal a notification landed on this pane (plan
+    /// Phase 3 U7). The ring layers inside the focus border so it stays visible even when the pane
+    /// is focused (whose border is already attention-teal); it hides after <see cref="FlashDuration"/>.
     /// </summary>
     public void Flash()
     {
-        _root.BorderBrush = Tokens.Attention;
+        _flashOverlay.BorderBrush = Tokens.Attention;
         _flashTimer ??= CreateFlashTimer();
         _flashTimer.Stop();
         _flashTimer.Start();
     }
 
-    /// <summary>Cancel any in-progress flash and restore the focus-state border immediately (AE6).</summary>
+    /// <summary>Cancel any in-progress flash and hide the overlay ring immediately (AE6).</summary>
     public void ClearFlash()
     {
         _flashTimer?.Stop();
-        RestoreBorder();
+        _flashOverlay.BorderBrush = Tokens.Transparent;
     }
 
     private DispatcherTimer CreateFlashTimer()
@@ -247,11 +264,8 @@ internal sealed class PaneView : UserControl
         timer.Tick += (_, _) =>
         {
             timer.Stop();
-            RestoreBorder();
+            _flashOverlay.BorderBrush = Tokens.Transparent;
         };
         return timer;
     }
-
-    private void RestoreBorder() =>
-        _root.BorderBrush = _controller.FocusedPane == _paneId ? Tokens.Attention : Tokens.Transparent;
 }
