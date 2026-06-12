@@ -98,13 +98,19 @@ Everything earlier than Phase 6 is shipped; do **not** re-execute it.
 Hot file in this wave: `app/App.xaml.cs` (governor lifecycle). Only **p6 U2**
 touches it — others stay disjoint.
 
-- [ ] **p6 U1** — Renderer polish (deferred from Phase 1): font fallback chains,
+- [x] **p6 U1** — Renderer polish (deferred from Phase 1): font fallback chains,
   color emoji, ligatures, subpixel AA via cosmic-text; GPU perf-tuning (damage
   regions, frame pacing). `║`
   Worktree: `wt-p6-u1-renderer-polish` · Branch: `feat/p6-u1-renderer-polish`
   Files: `engine/src/render/`, `engine/src/text/`, glyphon usage. **Does not
   touch** any C# chrome file.
-  PR: _none yet_ · Merge: _—_
+  PR: #9 · Merge: content commits `f944307` + `96b6a95` (preferred monospace
+  chain Cascadia Code → Cascadia Mono → Consolas replaces fontdb's Courier New
+  default; ligatures via existing Shaping::Advanced; emoji/CJK via cosmic-text
+  per-script fallback; frame-signature skip drops the whole GPU pass on
+  unchanged frames. Subpixel AA: unsupported by glyphon — grayscale AA in sRGB
+  space retained and documented. Damage regions delivered as a frame-level
+  skip, not scissored partial present.)
   _Verification: `cargo test --manifest-path engine\Cargo.toml`; manual A/B
   screenshot vs main on an emoji/CJK/ligature corpus; record frame timings before/after._
 
@@ -251,5 +257,7 @@ A red gate is the end of the unit; fix it before opening a PR.
 - 2026-06-12 · chore/res-u3-tokens-migration · res U3 · PR #8 · Tokens registry completed: `app/Design/Tokens.cs` extended from 5 brushes / 4 font sizes to 15 brushes / 4 font sizes; `SidebarView`, `PaneTabStrip`, `PaneView`, `SplitTreeView` now consume named tokens for every color and font size. RISK #2 applied in-flight: pane flash → `Attention` teal (was `#4D9CF0`), unread dot + sidebar badge → dedicated `Unread` magenta `#D86FB0` (were `#4D9CF0`), so `PrOpen` blue stops doubling as either. RISK #1 (per-workspace identity hue derivation) stays a separate follow-up. Guard: `tests/Design/TokensGuardTests.cs` walks `app/**/*.cs` and asserts no `Color.FromArgb(...)` or `FontSize = <digit>` outside `Tokens.cs` (comment lines skipped). Gates: dotnet test 245 (floor 238 + res U2's +6 already merged + 1 new guard test), cargo test 19, cargo build --lib clean, app build 0W/0E.
 
 - 2026-06-12 · feat/p6-u3-packaging · p6 U3 · PR #7 · Packaging spike: `build.ps1 -Publish` verified end-to-end (self-contained app publish 494 files incl. `Optimus.pri` + `optimus_engine.dll`; CLI now publishes self-contained single-file 68 MB); landed `installer/optimus.iss` (per-user Inno Setup, opt-in PATH, conditional WebView2 Evergreen bootstrap) + `installer/README.md` (WebView2 detection/bootstrap/UDF contract for p6 U4) + clean-install runbook. Gates: dotnet 244, cargo 19, app build 0W/0E. Published smoke: UI fully composed (sidebar 1/17 indicator, live terminal), capacity.json saves on close. KEY FINDING → res U4: release-profile engine AVs 0xC0000005 in D3D12Core.dll ~60 s after window close (debug-engine swap exits 0 in 2 s); filed as new unit, documented in runbook. Inno compile untested locally (no iscc on dev machine).
+
+- 2026-06-12 · feat/p6-u1-renderer-polish · p6 U1 · PR #9 · Renderer polish: explicit monospace fallback chain (Cascadia Code → Cascadia Mono → Consolas; fontdb's `Family::Monospace` default on Windows is **Courier New** — logged to memory per R6) unlocking calt ligatures + per-script emoji/CJK fallback; frame-signature damage skip (rows + quads + geometry + palette defaults) drops the entire GPU pass on unchanged frames, reset on resize/DPI/reconfigure and stored only after a successful present. Gates: cargo 25 (floor 19 + 6 new headless shaping/signature tests), dotnet 245, app build 0W/0E. Codex review (sandboxed; failure-mode analysis): 1 real find taken — palette defaults (`default_fg`/`default_bg`) missing from the signature would freeze OSC 10/11 palette swaps; fixed in `96b6a95` + regression test. Honest scope: subpixel AA not feasible in glyphon (grayscale-in-sRGB retained); damage regions = frame-level skip, no partial present. Manual A/B emoji/ligature screenshot + frame timings deferred to the live smoke alongside res U4 (release-exit crash sits in the same teardown path).
 
 Format per entry: `- YYYY-MM-DD · <session-id-or-branch> · <unit-id> · PR #<n> · <outcome>`
