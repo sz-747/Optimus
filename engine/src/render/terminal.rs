@@ -65,6 +65,13 @@ pub struct TerminalRenderer {
     /// Shaped-buffer cache, indexed by viewport row (0 = top visible row). Slots are `None`
     /// only transiently while a frame is being built. Cleared on resize/DPI change.
     row_cache: Vec<Option<CachedRow>>,
+    /// Signature of the last *successfully presented* frame (rows + quads + geometry).
+    /// When the next frame hashes identically, the GPU work (upload/prepare/draw/present)
+    /// is skipped entirely — the flip-model swapchain keeps compositing the last presented
+    /// buffer. PTY bursts that don't change the visible screen (e.g. cursor-position-only
+    /// queries, repeated identical status lines) become free. Reset whenever the surface
+    /// could have lost its contents (resize, DPI change, outdated/lost reconfigure).
+    last_frame_key: Option<u64>,
 }
 
 impl TerminalRenderer {
@@ -84,6 +91,7 @@ impl TerminalRenderer {
             quads,
             text,
             row_cache: Vec::new(),
+            last_frame_key: None,
         })
     }
 
@@ -92,6 +100,7 @@ impl TerminalRenderer {
         self.quads.set_resolution(&self.panel.queue, width, height);
         // Shaping width + geometry changed: every cached row is stale.
         self.row_cache.clear();
+        self.last_frame_key = None;
     }
 
     pub fn set_scale(&mut self, dpi_scale: f32) {
@@ -100,6 +109,7 @@ impl TerminalRenderer {
         self.panel.set_composition_scale(dpi_scale);
         // Font size changed: re-shape every row at the new metrics.
         self.row_cache.clear();
+        self.last_frame_key = None;
     }
 
     /// Physical-pixel cell size (advance width, line height) — used to derive cols/rows.
@@ -124,6 +134,7 @@ impl TerminalRenderer {
             quads: quad_layer,
             text,
             row_cache,
+            last_frame_key,
         } = self;
 
         let (cell_w, cell_h) = text.cell_size();
@@ -287,6 +298,21 @@ impl TerminalRenderer {
             new_cache.push(Some(cached));
         }
 
+        // Frame-level damage check: if rows, quads, and geometry all match the last presented
+        // frame, the screen already shows exactly this frame — skip the GPU work entirely.
+        let frame_key = frame_signature(
+            new_cache.iter().map(|slot| {
+                slot.as_ref().expect("every row slot is populated above").key
+            }),
+            &quads,
+            surf_w,
+            surf_h,
+        );
+        if *last_frame_key == Some(frame_key) {
+            *row_cache = new_cache;
+            return Ok(());
+        }
+
         // Build text areas referencing the (reused or freshly shaped) row buffers.
         let bounds = TextLayer::full_bounds(surf_w, surf_h);
         let areas: Vec<TextArea> = new_cache
@@ -327,6 +353,8 @@ impl TerminalRenderer {
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 panel.reconfigure();
+                // The recreated swapchain has undefined contents — never skip the next frame.
+                *last_frame_key = None;
                 return Err(RenderError::FrameUnavailable("surface outdated/lost; reconfigured"));
             }
             wgpu::CurrentSurfaceTexture::Timeout => {
@@ -369,8 +397,31 @@ impl TerminalRenderer {
         }
         panel.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
+        *last_frame_key = Some(frame_key);
         Ok(())
     }
+}
+
+/// A stable signature over everything that determines a frame's pixels: the per-row
+/// appearance keys (which already cover text, colors, and shaping width), the quad
+/// instances (backgrounds, selection, cursor — position + size + color), and the surface
+/// geometry. Two frames with equal signatures rasterize identically.
+fn frame_signature(
+    row_keys: impl Iterator<Item = u64>,
+    quads: &[QuadInstance],
+    surf_w: u32,
+    surf_h: u32,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    surf_w.hash(&mut h);
+    surf_h.hash(&mut h);
+    for key in row_keys {
+        key.hash(&mut h);
+    }
+    quads.len().hash(&mut h);
+    bytemuck::cast_slice::<QuadInstance, u8>(quads).hash(&mut h);
+    h.finish()
 }
 
 /// A stable key over a row's *visible* appearance — the coalesced spans (text + per-span
@@ -391,6 +442,39 @@ fn row_appearance_key(spans: &[Span], surf_w: u32) -> u64 {
         s.italic.hash(&mut h);
     }
     h.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identical_frames_share_a_signature() {
+        let quads = [QuadInstance::new(0.0, 0.0, 8.0, 16.0, [0.1, 0.2, 0.3, 1.0])];
+        let a = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600);
+        let b = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn any_visible_change_changes_the_signature() {
+        let quads = [QuadInstance::new(0.0, 0.0, 8.0, 16.0, [0.1, 0.2, 0.3, 1.0])];
+        let base = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600);
+
+        // A row re-shaped differently (e.g. new text).
+        let row = frame_signature([1u64, 2, 4].into_iter(), &quads, 800, 600);
+        // A quad moved one cell right (e.g. the cursor advanced).
+        let moved = [QuadInstance::new(8.0, 0.0, 8.0, 16.0, [0.1, 0.2, 0.3, 1.0])];
+        let quad = frame_signature([1u64, 2, 3].into_iter(), &moved, 800, 600);
+        // All quads gone (e.g. selection cleared on a default-bg screen).
+        let none = frame_signature([1u64, 2, 3].into_iter(), &[], 800, 600);
+        // Surface resized at identical content.
+        let sized = frame_signature([1u64, 2, 3].into_iter(), &quads, 801, 600);
+
+        for (name, sig) in [("row", row), ("quad", quad), ("none", none), ("size", sized)] {
+            assert_ne!(base, sig, "{name} change did not change the frame signature");
+        }
+    }
 }
 
 /// sRGB 0–1 tuple → 8-bit sRGB components (for glyphon text colors).
