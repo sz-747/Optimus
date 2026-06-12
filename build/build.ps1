@@ -74,8 +74,13 @@ Write-Host "==> dotnet $($dotnetArgs -join ' ')" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "dotnet $verb failed ($LASTEXITCODE)" }
 
 # Build the optimus CLI (plan Phase 4 U4) alongside the app so `optimus.exe` ships with it.
+# On publish, the CLI goes self-contained single-file: the installer payload (p6 U3) must run
+# on machines with no .NET runtime, same guarantee the app gets from SelfContained above.
 $cliProj = Join-Path $repo 'cli\Optimus.Cli.csproj'
 $cliArgs = @($verb, $cliProj, '-c', $Configuration)
+if ($Publish) {
+    $cliArgs += @('-r', $Rid, '--self-contained', 'true', '-p:PublishSingleFile=true')
+}
 
 Write-Host "==> dotnet $($cliArgs -join ' ')" -ForegroundColor Cyan
 & dotnet @cliArgs

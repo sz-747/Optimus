@@ -126,7 +126,7 @@ touches it — others stay disjoint.
   _Verification: dotnet test 238+; launch app, spawn ≥3 surfaces, exit, confirm
   `%LOCALAPPDATA%\optimus\capacity.json` updated mtime + new `budgetBytes`._
 
-- [ ] **p6 U3** — Packaging / distribution spike: unpackaged self-contained
+- [x] **p6 U3** — Packaging / distribution spike: unpackaged self-contained
   publish (`dotnet publish -r win-x64 -c Release --self-contained`), bundle
   Windows App SDK runtime, document the WebView2 Evergreen bootstrap path that
   **p6 U4** will consume. Land an installer script (Inno Setup or MSIX-optional
@@ -134,9 +134,28 @@ touches it — others stay disjoint.
   Worktree: `wt-p6-u3-packaging` · Branch: `feat/p6-u3-packaging`
   Files: `app/Optimus.App.csproj` (publish props), new `installer/`,
   `docs/runbooks/2026-06-11-clean-install-smoke.md`.
-  PR: _none yet_ · Merge: _—_
+  PR: #7 · Merge: publish props already existed on main (csproj untouched);
+  landed `installer/optimus.iss` + `installer/README.md` (WebView2 Evergreen
+  bootstrap contract for U4), clean-install runbook, and `build.ps1 -Publish`
+  now publishes the CLI self-contained single-file. Spike's key finding filed
+  as **res U4** below.
   _Verification: `dotnet publish` succeeds; smoke on a clean VM or a fresh local
   user profile; tracker the WebView2 runtime detection contract for U4._
+
+- [ ] **res U4** — Release-profile engine crashes on exit: published Release
+  app lingers ~60 s after window close, then dies 0xC0000005 in
+  `D3D12Core.dll` (wgpu/D3D12 teardown race). Discovered by the p6 U3 publish
+  smoke; debug-engine swap into the same publish exits 0 in ~2 s, pinning the
+  fault to `cargo build --release` of the engine. Likely interacts with the
+  R9 render-thread/panel teardown ordering; consider folding into **p6 U1**
+  if it lands first. `║`
+  Worktree: `wt-res-u4-release-engine-exit` · Branch: `fix/res-u4-release-engine-exit`
+  Files: `engine/src/render/` (device/surface teardown), possibly
+  `app/Splits/` shutdown ordering.
+  PR: _none yet_ · Merge: _—_
+  _Verification: published Release app exits code 0 within ~5 s of window
+  close, no Application Error event; smoke per
+  `docs/runbooks/2026-06-11-clean-install-smoke.md` §2._
 
 ### Wave 2 — Chrome surface area  (mixed)
 
@@ -224,5 +243,7 @@ A red gate is the end of the unit; fix it before opening a PR.
 - 2026-06-11 · chore/res-u1-phase2-status · res U1 · PR #4 · Phase 2 plan flipped to completed with Outcome block (PR #1, `30d97ab`); pure docs, no gates run per unit note. PR #3 mis-merged into stale GitHub default branch `feat/phase1-walking-skeleton`; repo default flipped to `main`, work re-landed as PR #4.
 - 2026-06-11 · fix/res-u2-cli-stdin-hang · res U2 · PR #5 · CLI stdin hang fixed via `StdinReader` (500ms first-byte timeout → null, 150ms quiet-window drain, 2s hard cap, leading-BOM strip). Gates: dotnet 244 (floor 238 + 6 new), cargo 19, app build 0W/0E. Live smoke: open-silent stdin exits ~300ms (was: infinite hang). Surprise (R6): PowerShell 5.1 `Process.Start` pushes a lone U+FEFF onto the redirected stdin pipe even when nothing is written — "silent" pipes from .NET Framework parents are not byte-silent. Codex review caught a use-after-dispose race on the reader events (fixed in `96f9650`).
 - 2026-06-12 · fix/p6-u2-governor-shutdown · p6 U2 · PR #6 · Governor now torn down on graceful shutdown: MainWindow.OnClosed → App.StopCapacityGovernor (ticker dispose → SaveCalibration → Capacity unpublished → provider dispose). Gates: dotnet 238 (floor; res U2's +6 live in unmerged PR #5), cargo 19, app build 0 new warnings (34 pre-existing nullable warnings in core/Ipc/CommandRouter.cs surfaced on full rebuild — they predate this unit). Live smoke ×3: graceful close exits 0, `%LOCALAPPDATA%\optimus\capacity.json` created then mtime-advances each exit, correct JSON shape. Codex review: 1 fix taken (unpublish Capacity before provider disposal), accepted trade-off documented (CapacityTicker.Dispose's bounded 2s+2s drains run on the UI thread during close — worst-case ~4s stall, common path milliseconds).
+
+- 2026-06-12 · feat/p6-u3-packaging · p6 U3 · PR #7 · Packaging spike: `build.ps1 -Publish` verified end-to-end (self-contained app publish 494 files incl. `Optimus.pri` + `optimus_engine.dll`; CLI now publishes self-contained single-file 68 MB); landed `installer/optimus.iss` (per-user Inno Setup, opt-in PATH, conditional WebView2 Evergreen bootstrap) + `installer/README.md` (WebView2 detection/bootstrap/UDF contract for p6 U4) + clean-install runbook. Gates: dotnet 244, cargo 19, app build 0W/0E. Published smoke: UI fully composed (sidebar 1/17 indicator, live terminal), capacity.json saves on close. KEY FINDING → res U4: release-profile engine AVs 0xC0000005 in D3D12Core.dll ~60 s after window close (debug-engine swap exits 0 in 2 s); filed as new unit, documented in runbook. Inno compile untested locally (no iscc on dev machine).
 
 Format per entry: `- YYYY-MM-DD · <session-id-or-branch> · <unit-id> · PR #<n> · <outcome>`
