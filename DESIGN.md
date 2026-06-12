@@ -184,16 +184,27 @@ added, redesign surfaces from scratch and drop semantic-color saturation ~15%.
 | 2026-06-10 | Identity = stable name + stable hue (shared seed) | Conductor research: it uses city names + branch-primary labels; Optimus's focused-surface-derived title is volatile. Pairing a stable name with the RISK #1 hue gives two redundant glance channels off one seed. |
 | 2026-06-10 | Sidebar row anticipates repo-grouping | Conductor shipped flat, then added group-by-repo at scale (0.35). Designing the row to accept a collapsible repo header now avoids a retrofit later. |
 | 2026-06-10 | Capacity indicator shipped; `Tokens.cs` seeded | RAM safe-zone plan U6/U7. Indicator escalation reuses semantic hues via `CapacityCalm`/`CapacityWarn`/`CapacityCap` aliases in `app/Design/Tokens.cs` rather than inventing new colors; `Tokens.cs` becomes the (partial) central token registry. |
+| 2026-06-12 | Older views migrated to `Tokens.cs`; RISK #2 applied; guard test added | res U3. `SidebarView`/`PaneTabStrip`/`PaneView`/`SplitTreeView` now consume named tokens (`Surface*`, `Text*`, `Git*`, `Pr*`, `Attention`, `Unread`, plus the existing `Font*` sizes). Pane flash → `Attention` teal; unread dot/badge → dedicated `Unread` magenta; `PrOpen` blue stops doubling as either. `tests/Design/TokensGuardTests.cs` fails the build on regression. |
 
-## Implementation note (partially applied)
-`app/Design/Tokens.cs` is now the central token registry — the one place in the app
+## Implementation note (applied)
+`app/Design/Tokens.cs` is the central token registry — the one place in the app
 assembly where raw hex values may live. It was seeded by the capacity indicator
-(plan U6) and currently carries: `Hairline`, `TextMuted`, `CapacityCalm`
-(= `text-muted`), `CapacityWarn` (= `git-dirty`), `CapacityCap` (= `pr-closed`),
-the `Mono` (Cascadia Mono) family, and the `caption`/`meta`/`body`/`title` font
-sizes. The remaining inline `Color.FromArgb` / `FontSize` literals in the older
-views (`SidebarView`, `PaneTabStrip`, `PaneView`, `SplitTreeView`) are **not yet
-migrated** — that migration, plus the RISK #1 / RISK #2 behavior changes
-(per-workspace hue derivation; splitting the flash brush from the unread brush),
-remains a tracked follow-up. New chrome code must consume `Tokens` and never
+(plan U6) and extended in **res U3 (2026-06-12)** to cover the older views
+(`SidebarView`, `PaneTabStrip`, `PaneView`, `SplitTreeView`). The token set now
+carries: surfaces (`Surface0`, `Surface1`, `Surface2`, `SurfaceSelected`,
+`Hairline`, `Transparent`); text (`TextPrimary`, `TextMuted`, `TextOnAccent`);
+semantic (`GitBranch`, `GitDirty`, `PrOpen`, `PrMerged`, `PrClosed`); attention
+(`Attention`, `Unread`); capacity aliases (`CapacityCalm`, `CapacityWarn`,
+`CapacityCap`); the `Mono` (Cascadia Mono) family; and the
+`caption`/`meta`/`body`/`title` font sizes.
+
+**RISK #2 applied:** the pane flash now uses `Attention` (teal) and unread
+badges/dots use the dedicated `Unread` (magenta), so `pr-open` blue no longer
+doubles as "attention" or "unread". **RISK #1** (per-workspace identity hue
+derivation, sidebar identity spine) remains a separately tracked follow-up.
+
+A guard test (`tests/Design/TokensGuardTests.cs`) scans `app/**/*.cs` on every
+test run and fails the build if any chrome view re-introduces raw
+`Color.FromArgb` or inline numeric `FontSize` literals; `Tokens.cs` itself is
+the only whitelisted file. New chrome code must consume `Tokens` and never
 introduce fresh literals.
