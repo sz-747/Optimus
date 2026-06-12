@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
@@ -247,7 +248,7 @@ public static class CommandRouter
         return SocketWireProtocol.SerializeV1Response("OK");
     }
 
-    private static string? HandleNotificationClear(ISocketEffects effects)
+    private static string HandleNotificationClear(ISocketEffects effects)
     {
         effects.NotificationClear();
         return SocketWireProtocol.SerializeV1Response("OK");
@@ -401,7 +402,7 @@ public static class CommandRouter
         string title = TryGetStringParam(request.Params, "title", out string? t) ? t : string.Empty;
         string subtitle = TryGetStringParam(request.Params, "subtitle", out string? s) ? s : string.Empty;
         string body = TryGetStringParam(request.Params, "body", out string? b) ? b : string.Empty;
-        string preferredSurfaceId = TryGetStringParam(request.Params, "preferred_surface_id", out string? p) ? p : null;
+        string? preferredSurfaceId = TryGetStringParam(request.Params, "preferred_surface_id", out string? p) ? p : null;
         effects.CreateNotificationForCaller(preferredSurfaceId, title, subtitle, body);
         return Ok(request, new { ok = true });
     }
@@ -825,7 +826,7 @@ public static class CommandRouter
         return false;
     }
 
-    private static bool TryGetStringParam(JsonElement element, string name, out string? value)
+    private static bool TryGetStringParam(JsonElement element, string name, [NotNullWhen(true)] out string? value)
     {
         value = null;
         if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out JsonElement raw))
@@ -834,7 +835,13 @@ public static class CommandRouter
         }
         if (raw.ValueKind == JsonValueKind.String)
         {
-            value = raw.GetString();
+            string? text = raw.GetString();
+            if (text is null)
+            {
+                return false;
+            }
+
+            value = text;
             return true;
         }
 

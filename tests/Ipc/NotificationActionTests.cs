@@ -14,11 +14,12 @@ public sealed class NotificationActionTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             @"{""id"":""101"",""method"":""notify"",""params"":{""surface_id"":""S3"",""workspace_id"":""ws"",""title"":""done"",""subtitle"":""done-sub"",""body"":""done-body""}}",
             effects,
             AuthState.Unprotected);
 
+        Assert.NotNull(response);
         using JsonDocument doc = JsonDocument.Parse(response);
         Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal(new SurfaceId(3), effects.CreatedForSurface);
@@ -33,11 +34,12 @@ public sealed class NotificationActionTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             @"{""id"":""102"",""method"":""notification.mark_read"",""params"":{""scope"":""all""}}",
             effects,
             AuthState.Unprotected);
 
+        Assert.NotNull(response);
         using JsonDocument doc = JsonDocument.Parse(response);
         Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.True(effects.MarkAllRead);
@@ -48,11 +50,12 @@ public sealed class NotificationActionTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             @"{""id"":""103"",""method"":""notification.dismiss"",""params"":{""scope"":""all_read""}}",
             effects,
             AuthState.Unprotected);
 
+        Assert.NotNull(response);
         using JsonDocument doc = JsonDocument.Parse(response);
         Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.True(effects.DismissAllReadCalled);
@@ -63,11 +66,12 @@ public sealed class NotificationActionTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             @"{""id"":""104"",""method"":""notification.create_for_caller"",""params"":{""preferred_surface_id"":""S4"",""title"":""title"",""subtitle"":"""",""body"":""body""}}",
             effects,
             AuthState.Unprotected);
 
+        Assert.NotNull(response);
         using JsonDocument doc = JsonDocument.Parse(response);
         Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal("S4", effects.CallerPreferredSurface);
