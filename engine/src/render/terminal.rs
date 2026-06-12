@@ -307,6 +307,8 @@ impl TerminalRenderer {
             &quads,
             surf_w,
             surf_h,
+            default_fg_u8,
+            default_bg_u8,
         );
         if *last_frame_key == Some(frame_key) {
             *row_cache = new_cache;
@@ -404,21 +406,32 @@ impl TerminalRenderer {
 
 /// A stable signature over everything that determines a frame's pixels: the per-row
 /// appearance keys (which already cover text, colors, and shaping width), the quad
-/// instances (backgrounds, selection, cursor — position + size + color), and the surface
-/// geometry. Two frames with equal signatures rasterize identically.
+/// instances (backgrounds, selection, cursor — position + size + color), the surface
+/// geometry, and the palette's resolved defaults — `default_bg` paints the pass clear
+/// and `default_fg` is every text area's default color, so a palette swap (e.g. OSC
+/// 10/11) with unchanged text must still change the signature. The fold is
+/// order-sensitive and length-prefixed. Two frames with equal signatures rasterize
+/// identically.
 fn frame_signature(
     row_keys: impl Iterator<Item = u64>,
     quads: &[QuadInstance],
     surf_w: u32,
     surf_h: u32,
+    default_fg: [u8; 4],
+    default_bg: [u8; 4],
 ) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     surf_w.hash(&mut h);
     surf_h.hash(&mut h);
+    default_fg.hash(&mut h);
+    default_bg.hash(&mut h);
+    let mut rows = 0u64;
     for key in row_keys {
         key.hash(&mut h);
+        rows += 1;
     }
+    rows.hash(&mut h);
     quads.len().hash(&mut h);
     bytemuck::cast_slice::<QuadInstance, u8>(quads).hash(&mut h);
     h.finish()
@@ -448,30 +461,45 @@ fn row_appearance_key(spans: &[Span], surf_w: u32) -> u64 {
 mod tests {
     use super::*;
 
+    const FG: [u8; 4] = [220, 220, 220, 255];
+    const BG: [u8; 4] = [12, 12, 12, 255];
+
     #[test]
     fn identical_frames_share_a_signature() {
         let quads = [QuadInstance::new(0.0, 0.0, 8.0, 16.0, [0.1, 0.2, 0.3, 1.0])];
-        let a = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600);
-        let b = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600);
+        let a = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600, FG, BG);
+        let b = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600, FG, BG);
         assert_eq!(a, b);
     }
 
     #[test]
     fn any_visible_change_changes_the_signature() {
         let quads = [QuadInstance::new(0.0, 0.0, 8.0, 16.0, [0.1, 0.2, 0.3, 1.0])];
-        let base = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600);
+        let base = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600, FG, BG);
 
         // A row re-shaped differently (e.g. new text).
-        let row = frame_signature([1u64, 2, 4].into_iter(), &quads, 800, 600);
+        let row = frame_signature([1u64, 2, 4].into_iter(), &quads, 800, 600, FG, BG);
         // A quad moved one cell right (e.g. the cursor advanced).
         let moved = [QuadInstance::new(8.0, 0.0, 8.0, 16.0, [0.1, 0.2, 0.3, 1.0])];
-        let quad = frame_signature([1u64, 2, 3].into_iter(), &moved, 800, 600);
+        let quad = frame_signature([1u64, 2, 3].into_iter(), &moved, 800, 600, FG, BG);
         // All quads gone (e.g. selection cleared on a default-bg screen).
-        let none = frame_signature([1u64, 2, 3].into_iter(), &[], 800, 600);
+        let none = frame_signature([1u64, 2, 3].into_iter(), &[], 800, 600, FG, BG);
         // Surface resized at identical content.
-        let sized = frame_signature([1u64, 2, 3].into_iter(), &quads, 801, 600);
+        let sized = frame_signature([1u64, 2, 3].into_iter(), &quads, 801, 600, FG, BG);
+        // Palette default swap with identical text/quads (OSC 10/11, theme change):
+        // the background is painted by the pass clear, not by quads, so the defaults
+        // must be part of the signature or the skip freezes the old colors.
+        let refg = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600, BG, BG);
+        let rebg = frame_signature([1u64, 2, 3].into_iter(), &quads, 800, 600, FG, FG);
 
-        for (name, sig) in [("row", row), ("quad", quad), ("none", none), ("size", sized)] {
+        for (name, sig) in [
+            ("row", row),
+            ("quad", quad),
+            ("none", none),
+            ("size", sized),
+            ("default fg", refg),
+            ("default bg", rebg),
+        ] {
             assert_ne!(base, sig, "{name} change did not change the frame signature");
         }
     }
