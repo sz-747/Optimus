@@ -20,6 +20,7 @@ Cargo.lock.orig
 
 # ── Agent worktrees (ce-work parallel isolation) ──
 .claude/worktrees/
+/worktrees/
 
 # ── Agent tooling (not part of the project) ──
 .codex/
