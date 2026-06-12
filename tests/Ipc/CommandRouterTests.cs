@@ -12,11 +12,12 @@ public sealed class CommandRouterTests
     [Fact] // Covers R2.
     public void Dispatch_v2_system_ping_returns_ok()
     {
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             @"{""id"":""1"",""method"":""system.ping""}",
             new FakeSocketEffects(),
             AuthState.Unprotected);
 
+        Assert.NotNull(response);
         using JsonDocument doc = JsonDocument.Parse(response);
         Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.True(doc.RootElement.GetProperty("result").GetProperty("pong").GetBoolean());
@@ -25,11 +26,12 @@ public sealed class CommandRouterTests
     [Fact] // Covers R2.
     public void Dispatch_unknown_v2_method_returns_method_not_found()
     {
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             @"{""id"":""2"",""method"":""unknown.method""}",
             new FakeSocketEffects(),
             AuthState.Unprotected);
 
+        Assert.NotNull(response);
         using JsonDocument doc = JsonDocument.Parse(response);
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal("method_not_found", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
@@ -40,7 +42,7 @@ public sealed class CommandRouterTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             "notify_target_async ws S2 task|done|ready",
             effects,
             AuthState.Unprotected);
@@ -58,7 +60,7 @@ public sealed class CommandRouterTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             "notification.create ws S1 title|subtitle|body",
             effects,
             AuthState.Unprotected);
@@ -76,7 +78,7 @@ public sealed class CommandRouterTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             "notification.create_for_caller title|subtitle|body",
             effects,
             AuthState.Unprotected);
@@ -93,7 +95,7 @@ public sealed class CommandRouterTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             "notification.mark_read S2",
             effects,
             AuthState.Unprotected);
@@ -107,7 +109,7 @@ public sealed class CommandRouterTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             "notification.mark_read all",
             effects,
             AuthState.Unprotected);
@@ -121,7 +123,7 @@ public sealed class CommandRouterTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             "notification.dismiss all_read",
             effects,
             AuthState.Unprotected);
@@ -135,11 +137,12 @@ public sealed class CommandRouterTests
     {
         FakeSocketEffects effects = new();
 
-        string response = CommandRouter.Dispatch(
+        string? response = CommandRouter.Dispatch(
             @"{""id"":""3"",""method"":""surface.send_text"",""params"":{""surface_id"":""S4"",""text"":""hello""}}",
             effects,
             AuthState.Unprotected);
 
+        Assert.NotNull(response);
         using JsonDocument doc = JsonDocument.Parse(response);
         Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.True(doc.RootElement.GetProperty("result").GetProperty("ok").GetBoolean());
@@ -153,14 +156,15 @@ public sealed class CommandRouterTests
         FakeSocketEffects effects = new();
         AuthState locked = new(RequiresAuthentication: true, IsAuthenticated: false);
 
-        string v1 = CommandRouter.Dispatch("send S1 hello", effects, locked);
+        string? v1 = CommandRouter.Dispatch("send S1 hello", effects, locked);
         Assert.Equal(SocketWireProtocol.SerializeV1Response("ERROR: auth required"), v1);
 
-        string v2 = CommandRouter.Dispatch(
+        string? v2 = CommandRouter.Dispatch(
             @"{""id"":""4"",""method"":""system.ping""}",
             effects,
             locked);
 
+        Assert.NotNull(v2);
         using JsonDocument doc = JsonDocument.Parse(v2);
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal("auth_required", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
@@ -171,6 +175,117 @@ public sealed class CommandRouterTests
     {
         Assert.Null(CommandRouter.Dispatch("events.stream", new FakeSocketEffects(), AuthState.Unprotected));
         Assert.Null(CommandRouter.Dispatch(@"{""id"":""5"",""method"":""events.stream"",""params"":{}}", new FakeSocketEffects(), AuthState.Unprotected));
+    }
+
+    [Fact] // Covers V2 null-field hardening: JSON null text must not reach ISocketEffects.
+    public void Surface_send_text_with_json_null_text_returns_invalid_params()
+    {
+        FakeSocketEffects effects = new();
+
+        string? response = CommandRouter.Dispatch(
+            @"{""id"":""10"",""method"":""surface.send_text"",""params"":{""surface_id"":""S4"",""text"":null}}",
+            effects,
+            AuthState.Unprotected);
+
+        Assert.NotNull(response);
+        using JsonDocument doc = JsonDocument.Parse(response);
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("invalid_params", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(string.Empty, effects.SentText);
+    }
+
+    [Fact] // Covers V2 missing-field hardening.
+    public void Surface_send_text_with_missing_text_returns_invalid_params()
+    {
+        string? response = CommandRouter.Dispatch(
+            @"{""id"":""11"",""method"":""surface.send_text"",""params"":{""surface_id"":""S4""}}",
+            new FakeSocketEffects(),
+            AuthState.Unprotected);
+
+        Assert.NotNull(response);
+        using JsonDocument doc = JsonDocument.Parse(response);
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("invalid_params", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
+
+    [Fact] // Covers V2 null-field hardening on set-status.
+    public void Set_status_with_json_null_status_returns_invalid_params()
+    {
+        string? response = CommandRouter.Dispatch(
+            @"{""id"":""12"",""method"":""set-status"",""params"":{""status"":null}}",
+            new FakeSocketEffects(),
+            AuthState.Unprotected);
+
+        Assert.NotNull(response);
+        using JsonDocument doc = JsonDocument.Parse(response);
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("invalid_params", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
+
+    [Fact] // Covers V2 null-field hardening on report_pwd.
+    public void Report_pwd_with_json_null_path_returns_invalid_params()
+    {
+        string? response = CommandRouter.Dispatch(
+            @"{""id"":""13"",""method"":""report_pwd"",""params"":{""surface_id"":""S2"",""path"":null}}",
+            new FakeSocketEffects(),
+            AuthState.Unprotected);
+
+        Assert.NotNull(response);
+        using JsonDocument doc = JsonDocument.Parse(response);
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("invalid_params", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
+
+    [Fact] // Covers V2 optional-field fallback: null title/subtitle/body degrade to empty strings, never null.
+    public void Notify_v2_with_json_null_optional_fields_falls_back_to_empty_strings()
+    {
+        FakeSocketEffects effects = new();
+
+        string? response = CommandRouter.Dispatch(
+            @"{""id"":""14"",""method"":""notify"",""params"":{""surface_id"":""S3"",""title"":null,""subtitle"":null,""body"":null}}",
+            effects,
+            AuthState.Unprotected);
+
+        Assert.NotNull(response);
+        using JsonDocument doc = JsonDocument.Parse(response);
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal(new SurfaceId(3), effects.CreatedForSurface);
+        Assert.Equal(string.Empty, effects.CreatedTitle);
+        Assert.Equal(string.Empty, effects.CreatedSubtitle);
+        Assert.Equal(string.Empty, effects.CreatedBody);
+    }
+
+    [Fact] // Covers V2 create_for_caller: absent/null preferred_surface_id passes null, fields degrade to empty.
+    public void Create_for_caller_v2_with_json_null_fields_passes_null_surface_and_empty_strings()
+    {
+        FakeSocketEffects effects = new();
+
+        string? response = CommandRouter.Dispatch(
+            @"{""id"":""15"",""method"":""notification.create_for_caller"",""params"":{""preferred_surface_id"":null,""title"":null}}",
+            effects,
+            AuthState.Unprotected);
+
+        Assert.NotNull(response);
+        using JsonDocument doc = JsonDocument.Parse(response);
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Null(effects.CallerPreferredSurface);
+        Assert.Equal(string.Empty, effects.CallerTitle);
+        Assert.Equal(string.Empty, effects.CallerSubtitle);
+        Assert.Equal(string.Empty, effects.CallerBody);
+    }
+
+    [Fact] // Covers V2 auth.login: null credential degrades to empty string and fails auth instead of throwing.
+    public void Auth_login_with_json_null_credential_fails_cleanly()
+    {
+        string? response = CommandRouter.Dispatch(
+            @"{""id"":""16"",""method"":""auth.login"",""params"":{""credential"":null}}",
+            new FakeSocketEffects(),
+            AuthState.Unprotected);
+
+        Assert.NotNull(response);
+        using JsonDocument doc = JsonDocument.Parse(response);
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.False(doc.RootElement.GetProperty("result").GetProperty("authorized").GetBoolean());
     }
 
     private sealed class FakeSocketEffects : ISocketEffects
@@ -185,7 +300,6 @@ public sealed class CommandRouterTests
         public string CallerSubtitle = string.Empty;
         public string CallerBody = string.Empty;
         public SurfaceId MarkReadSurface;
-        public Guid MarkReadNotificationId;
         public bool MarkAllRead;
         public bool DismissAllReadCalled;
 
