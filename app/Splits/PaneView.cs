@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using Optimus.Core;
+using Optimus.Design;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Windows.UI;
 
 namespace Optimus.Splits;
 
@@ -25,21 +25,18 @@ namespace Optimus.Splits;
 /// </summary>
 internal sealed class PaneView : UserControl
 {
-    private static readonly SolidColorBrush ContentBackground = new(Color.FromArgb(0xFF, 0x0C, 0x0C, 0x0C));
-
-    // Focus indicator (R7): the focused pane is outlined in teal; every other pane's border is
-    // transparent. The border lives on the pane's root grid so it frames the whole pane (tab strip
-    // and terminal). The engine has no focus concept and draws a solid cursor in every surface, so
-    // this outline is the only optimus-level cue for which pane currently receives keystrokes. The
-    // thickness is constant — only the brush toggles — so gaining/losing focus never reflows the pane.
+    // Focus indicator (R7): the focused pane is outlined in attention-teal (DESIGN.md RISK #2:
+    // teal always means "active / live"); every other pane's border is transparent. The border
+    // lives on the pane's root grid so it frames the whole pane (tab strip and terminal). The
+    // engine has no focus concept and draws a solid cursor in every surface, so this outline is
+    // the only optimus-level cue for which pane currently receives keystrokes. The thickness is
+    // constant — only the brush toggles — so gaining/losing focus never reflows the pane.
     private const double FocusBorderThickness = 2.0;
-    private static readonly SolidColorBrush FocusedBorder = new(Color.FromArgb(0xFF, 0x2D, 0xD4, 0xBF));
-    private static readonly SolidColorBrush UnfocusedBorder = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
 
-    // Notification pane-flash (plan Phase 3 U7): briefly paint the pane border blue when a
-    // notification lands on it, then revert to the focus-state border. Colour-only on the existing
+    // Notification pane-flash (plan Phase 3 U7): briefly paint the pane border when a notification
+    // lands on it, then revert to the focus-state border. Per DESIGN.md the flash IS the attention
+    // pulse — same hue as the focused border, layered briefly. Colour-only on the existing
     // constant-thickness border slot, so it never reflows the pane (mirrors the focus-outline model).
-    private static readonly SolidColorBrush FlashBorder = new(Color.FromArgb(0xFF, 0x4D, 0x9C, 0xF0));
     private static readonly TimeSpan FlashDuration = TimeSpan.FromMilliseconds(700);
 
     private readonly PaneId _paneId;
@@ -50,7 +47,7 @@ internal sealed class PaneView : UserControl
     private DispatcherTimer? _flashTimer;
 
     private readonly PaneTabStrip _strip = new();
-    private readonly Grid _contentHost = new() { Background = ContentBackground };
+    private readonly Grid _contentHost = new() { Background = Tokens.Surface0 };
     private readonly Grid _root = new();
 
     // Surfaces currently parented in this pane's content host, plus the title handler we attached to
@@ -91,7 +88,7 @@ internal sealed class PaneView : UserControl
         // Constant teal-border slot for the focus outline: starts transparent and Sync paints it on
         // the focused pane from the first snapshot (toggling colour, never thickness, avoids reflow).
         _root.BorderThickness = new Thickness(FocusBorderThickness);
-        _root.BorderBrush = UnfocusedBorder;
+        _root.BorderBrush = Tokens.Transparent;
         Grid.SetRow(_strip, 0);
         Grid.SetRow(_contentHost, 1);
         _root.Children.Add(_strip);
@@ -136,7 +133,7 @@ internal sealed class PaneView : UserControl
 
         RenderStrip(leaf.Tabs, leaf.Selected);
         _strip.SetZoomActive(snapshot.ZoomedPane == _paneId);
-        _root.BorderBrush = snapshot.FocusedPane == _paneId ? FocusedBorder : UnfocusedBorder;
+        _root.BorderBrush = snapshot.FocusedPane == _paneId ? Tokens.Attention : Tokens.Transparent;
     }
 
     /// <summary>
@@ -231,7 +228,7 @@ internal sealed class PaneView : UserControl
     /// </summary>
     public void Flash()
     {
-        _root.BorderBrush = FlashBorder;
+        _root.BorderBrush = Tokens.Attention;
         _flashTimer ??= CreateFlashTimer();
         _flashTimer.Stop();
         _flashTimer.Start();
@@ -256,5 +253,5 @@ internal sealed class PaneView : UserControl
     }
 
     private void RestoreBorder() =>
-        _root.BorderBrush = _controller.FocusedPane == _paneId ? FocusedBorder : UnfocusedBorder;
+        _root.BorderBrush = _controller.FocusedPane == _paneId ? Tokens.Attention : Tokens.Transparent;
 }

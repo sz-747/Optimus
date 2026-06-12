@@ -7,7 +7,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
-using Windows.UI;
 
 namespace Optimus.Sidebar;
 
@@ -22,19 +21,6 @@ namespace Optimus.Sidebar;
 internal sealed class SidebarView : Grid
 {
     public const double PanelWidth = 220.0;
-
-    private static readonly SolidColorBrush PanelBackground = new(Color.FromArgb(0xFF, 0x12, 0x12, 0x12));
-    private static readonly SolidColorBrush SelectedRow = new(Color.FromArgb(0xFF, 0x2D, 0x2D, 0x2D));
-    private static readonly SolidColorBrush TransparentRow = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
-    private static readonly SolidColorBrush TitleText = new(Color.FromArgb(0xFF, 0xE6, 0xE6, 0xE6));
-    private static readonly SolidColorBrush MetaText = new(Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A));
-    private static readonly SolidColorBrush BranchText = new(Color.FromArgb(0xFF, 0x7F, 0xB3, 0x6E));
-    private static readonly SolidColorBrush DirtyText = new(Color.FromArgb(0xFF, 0xD9, 0xA0, 0x4E));
-    private static readonly SolidColorBrush PrOpen = new(Color.FromArgb(0xFF, 0x4D, 0x9C, 0xF0));
-    private static readonly SolidColorBrush PrMerged = new(Color.FromArgb(0xFF, 0xA8, 0x7F, 0xE0));
-    private static readonly SolidColorBrush PrClosed = new(Color.FromArgb(0xFF, 0xD9, 0x6A, 0x6A));
-    private static readonly SolidColorBrush UnreadBadge = new(Color.FromArgb(0xFF, 0x4D, 0x9C, 0xF0));
-    private static readonly SolidColorBrush BadgeText = new(Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF));
 
     private readonly StackPanel _rows;
     private readonly CapacityIndicatorViewModel _capacity;
@@ -54,7 +40,7 @@ internal sealed class SidebarView : Grid
     public SidebarView()
     {
         Width = PanelWidth;
-        Background = PanelBackground;
+        Background = Tokens.Surface1;
         RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
@@ -79,9 +65,9 @@ internal sealed class SidebarView : Grid
             Content = "+  New workspace",
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left,
-            Background = TransparentRow,
-            BorderBrush = TransparentRow,
-            Foreground = MetaText,
+            Background = Tokens.Transparent,
+            BorderBrush = Tokens.Transparent,
+            Foreground = Tokens.TextMuted,
             Margin = new Thickness(4),
         };
         _newButton.Click += (_, _) => NewWorkspaceRequested?.Invoke();
@@ -176,7 +162,7 @@ internal sealed class SidebarView : Grid
     {
         var grid = new Grid
         {
-            Background = row.IsSelected ? SelectedRow : TransparentRow,
+            Background = row.IsSelected ? Tokens.SurfaceSelected : Tokens.Transparent,
             Padding = new Thickness(10, 8, 6, 8),
             ColumnDefinitions =
             {
@@ -192,8 +178,8 @@ internal sealed class SidebarView : Grid
         lines.Children.Add(new TextBlock
         {
             Text = row.Title,
-            Foreground = TitleText,
-            FontSize = 13,
+            Foreground = Tokens.TextPrimary,
+            FontSize = Tokens.FontTitle,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
 
@@ -204,8 +190,8 @@ internal sealed class SidebarView : Grid
             meta.Children.Add(new TextBlock
             {
                 Text = row.GitDirty ? branch + " ●" : branch,
-                Foreground = row.GitDirty ? DirtyText : BranchText,
-                FontSize = 11,
+                Foreground = row.GitDirty ? Tokens.GitDirty : Tokens.GitBranch,
+                FontSize = Tokens.FontMeta,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
         }
@@ -215,7 +201,7 @@ internal sealed class SidebarView : Grid
             {
                 Text = pr,
                 Foreground = PrBrush(row.PrStatus),
-                FontSize = 11,
+                FontSize = Tokens.FontMeta,
             });
         }
         if (meta.Children.Count > 0)
@@ -229,8 +215,8 @@ internal sealed class SidebarView : Grid
             lines.Children.Add(new TextBlock
             {
                 Text = cwd,
-                Foreground = MetaText,
-                FontSize = 11,
+                Foreground = Tokens.TextMuted,
+                FontSize = Tokens.FontMeta,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
         }
@@ -241,8 +227,8 @@ internal sealed class SidebarView : Grid
             lines.Children.Add(new TextBlock
             {
                 Text = latest,
-                Foreground = MetaText,
-                FontSize = 11,
+                Foreground = Tokens.TextMuted,
+                FontSize = Tokens.FontMeta,
                 FontStyle = Windows.UI.Text.FontStyle.Italic,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
@@ -259,8 +245,8 @@ internal sealed class SidebarView : Grid
             lines.Children.Add(new TextBlock
             {
                 Text = text,
-                Foreground = MetaText,
-                FontSize = 11,
+                Foreground = Tokens.TextMuted,
+                FontSize = Tokens.FontMeta,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
         }
@@ -283,12 +269,12 @@ internal sealed class SidebarView : Grid
                 VerticalAlignment = VerticalAlignment.Center,
                 Children =
                 {
-                    new Ellipse { Width = 18, Height = 18, Fill = UnreadBadge },
+                    new Ellipse { Width = 18, Height = 18, Fill = Tokens.Unread },
                     new TextBlock
                     {
                         Text = row.UnreadCount > 9 ? "9+" : row.UnreadCount.ToString(),
-                        Foreground = BadgeText,
-                        FontSize = 10,
+                        Foreground = Tokens.TextOnAccent,
+                        FontSize = Tokens.FontCaption,
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center,
                     },
@@ -300,11 +286,11 @@ internal sealed class SidebarView : Grid
         var close = new Button
         {
             Content = "✕",
-            FontSize = 10,
+            FontSize = Tokens.FontCaption,
             Padding = new Thickness(4, 2, 4, 2),
-            Background = TransparentRow,
-            BorderBrush = TransparentRow,
-            Foreground = MetaText,
+            Background = Tokens.Transparent,
+            BorderBrush = Tokens.Transparent,
+            Foreground = Tokens.TextMuted,
         };
         close.Click += (_, _) => WorkspaceCloseRequested?.Invoke(id);
         trailing.Children.Add(close);
@@ -321,8 +307,8 @@ internal sealed class SidebarView : Grid
 
     private static SolidColorBrush PrBrush(string? status) => status switch
     {
-        "merged" => PrMerged,
-        "closed" => PrClosed,
-        _ => PrOpen,
+        "merged" => Tokens.PrMerged,
+        "closed" => Tokens.PrClosed,
+        _ => Tokens.PrOpen,
     };
 }

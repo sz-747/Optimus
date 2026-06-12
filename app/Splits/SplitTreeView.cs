@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using CommunityToolkit.WinUI.Controls;
 using Optimus.Core;
+using Optimus.Design;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Windows.UI;
 
 namespace Optimus.Splits;
 
@@ -123,7 +123,7 @@ internal sealed class SplitTreeView : Grid
 
         var splitter = new GridSplitter
         {
-            Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x2B, 0x2B, 0x2B)),
+            Background = Tokens.Hairline,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             ResizeBehavior = GridSplitter.GridResizeBehavior.PreviousAndNext,

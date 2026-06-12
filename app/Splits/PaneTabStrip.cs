@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Immutable;
 using Optimus.Core;
+using Optimus.Design;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
-using Windows.UI;
 
 namespace Optimus.Splits;
 
@@ -22,18 +22,12 @@ internal sealed class PaneTabStrip : Grid
 {
     private const double StripHeight = 32.0;
 
-    private static readonly SolidColorBrush StripBackground = new(Color.FromArgb(0xFF, 0x16, 0x16, 0x16));
-    private static readonly SolidColorBrush SelectedChip = new(Color.FromArgb(0xFF, 0x2D, 0x2D, 0x2D));
-    private static readonly SolidColorBrush Transparent = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
-    private static readonly SolidColorBrush ActiveText = new(Color.FromArgb(0xFF, 0xE6, 0xE6, 0xE6));
-    private static readonly SolidColorBrush MutedText = new(Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A));
-
-    // Unread-notification dot (plan Phase 3 U7): a small blue marker in a fixed leading slot, kept
-    // distinct from the teal focus border so "unread" never reads as "focused". The slot is always
-    // reserved (constant width) so toggling unread never shifts the title text.
+    // Unread-notification dot (plan Phase 3 U7): a small magenta marker in a fixed leading slot,
+    // dedicated to "unread" (DESIGN.md RISK #2) so it never collides with the teal focus border or
+    // the blue pr-open badge. The slot is always reserved (constant width) so toggling unread never
+    // shifts the title text.
     private const double UnreadSlotWidth = 14.0;
     private const double UnreadDotSize = 7.0;
-    private static readonly SolidColorBrush UnreadDot = new(Color.FromArgb(0xFF, 0x4D, 0x9C, 0xF0));
 
     private readonly StackPanel _tabs;
     private readonly Button _zoomButton;
@@ -59,7 +53,7 @@ internal sealed class PaneTabStrip : Grid
     public PaneTabStrip()
     {
         Height = StripHeight;
-        Background = StripBackground;
+        Background = Tokens.Surface2;
         ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -119,15 +113,15 @@ internal sealed class PaneTabStrip : Grid
     /// </summary>
     public void SetZoomActive(bool active)
     {
-        _zoomButton.Foreground = active ? ActiveText : MutedText;
-        _zoomButton.Background = active ? SelectedChip : Transparent;
+        _zoomButton.Foreground = active ? Tokens.TextPrimary : Tokens.TextMuted;
+        _zoomButton.Background = active ? Tokens.SurfaceSelected : Tokens.Transparent;
     }
 
     private FrameworkElement MakeChip(TabHeaderDto header)
     {
         var chip = new Grid
         {
-            Background = header.IsSelected ? SelectedChip : Transparent,
+            Background = header.IsSelected ? Tokens.SurfaceSelected : Tokens.Transparent,
             Padding = new Thickness(4, 0, 2, 0),
             MinWidth = 90,
             MaxWidth = 220,
@@ -145,7 +139,7 @@ internal sealed class PaneTabStrip : Grid
             {
                 Width = UnreadDotSize,
                 Height = UnreadDotSize,
-                Fill = UnreadDot,
+                Fill = Tokens.Unread,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -156,10 +150,10 @@ internal sealed class PaneTabStrip : Grid
         var title = new TextBlock
         {
             Text = header.Title,
-            Foreground = header.IsSelected ? ActiveText : MutedText,
+            Foreground = header.IsSelected ? Tokens.TextPrimary : Tokens.TextMuted,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            FontSize = 12,
+            FontSize = Tokens.FontBody,
         };
         Grid.SetColumn(title, 1);
         chip.Children.Add(title);
@@ -183,10 +177,10 @@ internal sealed class PaneTabStrip : Grid
     {
         var button = new Button
         {
-            Content = new TextBlock { Text = glyph, FontSize = 11 },
-            Background = Transparent,
+            Content = new TextBlock { Text = glyph, FontSize = Tokens.FontMeta },
+            Background = Tokens.Transparent,
             BorderThickness = new Thickness(0),
-            Foreground = MutedText,
+            Foreground = Tokens.TextMuted,
             Padding = new Thickness(8, 4, 8, 4),
             VerticalAlignment = VerticalAlignment.Center,
         };
