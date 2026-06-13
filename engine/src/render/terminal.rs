@@ -59,7 +59,12 @@ struct CachedRow {
 }
 
 pub struct TerminalRenderer {
-    panel: PanelRenderer,
+    // Field order *is* teardown order (Rust drops fields top-to-bottom). The GPU resource
+    // layers (`quads`, `text`) are built from `panel.device`, so they are declared *before*
+    // `panel` to drop first — their buffers, pipelines, and the glyphon atlas must be released
+    // while the device they belong to is still alive. `panel` (device/queue/surface) drops
+    // last; `Drop` (below) first blocks until the GPU is idle so nothing is freed mid-flight
+    // (res U4).
     quads: QuadLayer,
     text: TextLayer,
     /// Shaped-buffer cache, indexed by viewport row (0 = top visible row). Slots are `None`
@@ -72,6 +77,31 @@ pub struct TerminalRenderer {
     /// queries, repeated identical status lines) become free. Reset whenever the surface
     /// could have lost its contents (resize, DPI change, outdated/lost reconfigure).
     last_frame_key: Option<u64>,
+    /// Owns the DX12 device, queue, and swapchain surface. Declared last so it tears down after
+    /// the GPU resource layers above (see the struct-level note and `Drop`).
+    panel: PanelRenderer,
+}
+
+impl Drop for TerminalRenderer {
+    /// Block until the GPU has retired all submitted work *before* any field drops.
+    ///
+    /// Tearing the wgpu device (and its DX12 swapchain) down while a frame is still in flight
+    /// lets D3D12's deferred-destruction queue free resources the GPU is still reading — a
+    /// use-after-free that surfaces as an `0xC0000005` access violation inside `D3D12Core.dll`
+    /// roughly a minute after the window closes. Optimized (release) engine builds queue and
+    /// retire frames fast enough to lose this race; debug builds happen to drain in time, which
+    /// is why the crash was release-only (res U4). Waiting for the device to go idle here drains
+    /// the queue first, so the field drops that follow — resource layers, then `panel`
+    /// (surface → queue → device → instance) — all run against quiesced hardware.
+    ///
+    /// The wait is bounded: a genuinely wedged GPU returns `PollError::Timeout` rather than
+    /// hanging window close indefinitely, and we proceed with teardown regardless.
+    fn drop(&mut self) {
+        let _ = self.panel.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(std::time::Duration::from_secs(2)),
+        });
+    }
 }
 
 impl TerminalRenderer {

@@ -48,9 +48,11 @@ Copy the entire `publish\` folder to the clean environment (e.g.
    [RAM safe-zone smoke](2026-06-10-ram-safe-zone-smoke.md) §2 for the math).
 2. A terminal spawns and accepts input (proves `optimus_engine.dll` + ConPTY
    work without dev tooling).
-3. Close the window. `%LOCALAPPDATA%\optimus\capacity.json` exists with
-   `{ "budgetBytes": …, "hardwareFingerprintGb": … }` (proves the p6 U2
-   save-on-exit path on a cold profile).
+3. Close the window. The process exits within ~5 s with **code 0** and writes
+   **no** Event Log → Application → "Application Error" entry (res U4 release-exit
+   teardown fix — see the note below §2). `%LOCALAPPDATA%\optimus\capacity.json`
+   exists with `{ "budgetBytes": …, "hardwareFingerprintGb": … }` (proves the
+   p6 U2 save-on-exit path on a cold profile).
 4. `bin`-less CLI check: copy `optimus.exe` (single-file CLI) anywhere, run
    `optimus.exe list` *while the app is up* — it must answer over the pipe, and
    exit promptly (not hang) when stdin is redirected (res U2 regression check):
@@ -65,16 +67,19 @@ Failure triage:
 | Window opens but indicator reads "— / — terminals" | governor failed to start — check `crash.log` for `App.StartCapacityGovernor` (fail-open is by design; the *cause* still needs fixing) |
 | App needs a ".NET runtime" download prompt | publish wasn't `--self-contained` — rebuild via `build.ps1 -Publish` |
 
-> **Known issue (found by this spike, 2026-06-12, open as res U4):** with the
-> *release-profile* engine, the process lingers ~60 s after window close and
-> then dies with 0xC0000005 in `D3D12Core.dll` (wgpu/D3D12 teardown race;
-> Event Log → Application → "Application Error" shows it; no `crash.log` since
-> the fault is native). The window closes normally and `capacity.json` still
-> saves — the crash is invisible to the user except for the lingering process.
-> Swapping in a debug-profile `optimus_engine.dll` exits 0 in ~2 s, which pins
-> the fault to the release engine build. Until res U4 lands, a Release smoke
-> "exit" check must allow this: verify window-close + `capacity.json` instead
-> of exit code.
+> **Fixed by res U4 (2026-06-13) — this is now the regression check.** The spike
+> found that with the *release-profile* engine the process lingered ~60 s after
+> window close and then died with 0xC0000005 in `D3D12Core.dll` (a wgpu/D3D12
+> teardown race: the DX12 device/swapchain were torn down while a frame was still
+> in flight, so D3D12's deferred-destruction queue freed resources the GPU was
+> still reading — release builds retired frames fast enough to lose the race,
+> debug builds drained in time). res U4 fixes it in the engine: `TerminalRenderer`
+> now blocks on `device.poll(PollType::Wait)` before teardown and drops its GPU
+> resource layers (then `panel`: surface → queue → device → instance) in that
+> order. **Verify the fix:** with a *Release* publish (release engine DLL), close
+> the window after spawning ≥3 terminals — the process must exit within ~5 s with
+> **code 0** and leave **no** Event Log → Application → "Application Error" entry.
+> A lingering process or an Application Error is a res U4 regression.
 
 ## 3. Smoke the installer
 

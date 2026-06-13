@@ -29,10 +29,16 @@ pub mod terminal;
 /// Owned and used exclusively by the render thread (plan §6: DX12 surfaces are not
 /// freely `Send`, so one thread owns the device + surface).
 pub struct PanelRenderer {
-    _instance: wgpu::Instance,
+    // Field order *is* teardown order: Rust drops fields top-to-bottom. The swapchain
+    // (`surface`) is released first, then the queue, then the device, and the instance
+    // (DXGI factory/adapter) last — so the DX12 device outlives every object that references
+    // it during teardown. Dropping the device or factory ahead of the swapchain leaves DXGI
+    // releasing a swapchain whose device is already gone, a teardown-order fault that shows up
+    // as an exit-time access violation in `D3D12Core.dll`. The GPU-idle wait that must precede
+    // *all* of this lives in `TerminalRenderer`'s `Drop` (res U4).
     pub(crate) surface: wgpu::Surface<'static>,
-    pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
+    pub(crate) device: wgpu::Device,
     pub(crate) config: wgpu::SurfaceConfiguration,
     /// Composition (= DPI) scale of the hosting `SwapChainPanel`. The panel composites the
     /// swapchain magnified by this factor; we apply its inverse as a swapchain matrix
@@ -40,6 +46,7 @@ pub struct PanelRenderer {
     /// after every `configure`, since the transform belongs to the swapchain object and is
     /// dropped whenever the swapchain is recreated.
     composition_scale: f32,
+    _instance: wgpu::Instance,
 }
 
 impl PanelRenderer {
