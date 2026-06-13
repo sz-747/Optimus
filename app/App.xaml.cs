@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
+using Microsoft.Web.WebView2.Core;
 using Optimus.Capacity;
 using Optimus.Ipc;
 using Optimus.Core;
@@ -65,6 +66,64 @@ public partial class App : Application
     /// running instead of letting it surface as a fatal STATUS_STOWED_EXCEPTION.
     /// </summary>
     internal static void LogError(string source, Exception? ex) => CrashLog("(recovered) " + source, ex);
+
+    // ---- WebView2 environment (p6 U4) --------------------------------------------------------
+
+    private static Task<CoreWebView2Environment>? _webView2Environment;
+    private static readonly object _webView2EnvironmentLock = new();
+
+    /// <summary>
+    /// Per-user WebView2 user-data folder (p6 U4). An <b>unpackaged</b> app's default UDF sits next
+    /// to the exe (under Program Files for an installed build) and is non-writable, so
+    /// <c>CoreWebView2</c> init throws unless we point it at a writable per-user location. This is
+    /// the location named in the installer's WebView2 bootstrap contract
+    /// (<c>installer/README.md</c> §4): <c>%LOCALAPPDATA%\optimus\webview2</c>.
+    /// </summary>
+    internal static string WebView2UserDataFolder { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "optimus", "webview2");
+
+    /// <summary>
+    /// The process-wide <see cref="CoreWebView2Environment"/>, created once and shared by every web
+    /// pane (p6 U4). Sharing one environment + UDF lets all panes share a single browser process
+    /// group (less memory than one per pane — the safe-zone whole point), and is created lazily so a
+    /// session that never opens a web pane never spins up the runtime. Created with the explicit
+    /// per-user UDF via <see cref="CoreWebView2Environment.CreateWithOptionsAsync"/> (the call the
+    /// installer contract names). The task is cached even on failure so the caller sees the same
+    /// fault rather than hammering a broken runtime; web panes catch it and show their inline
+    /// "runtime required" fallback (KTD: fail-open, never block terminal spawning).
+    /// </summary>
+    internal static Task<CoreWebView2Environment> GetWebView2EnvironmentAsync()
+    {
+        lock (_webView2EnvironmentLock)
+        {
+            return _webView2Environment ??= CreateWebView2EnvironmentAsync();
+        }
+    }
+
+    private static async Task<CoreWebView2Environment> CreateWebView2EnvironmentAsync()
+    {
+        try
+        {
+            Directory.CreateDirectory(WebView2UserDataFolder);
+            return await CoreWebView2Environment.CreateWithOptionsAsync(
+                browserExecutableFolder: null,
+                userDataFolder: WebView2UserDataFolder,
+                options: null);
+        }
+        catch
+        {
+            // Do not memoize a transient failure (locked/corrupt UDF, momentary permissions issue).
+            // GetWebView2EnvironmentAsync caches the *task*, so a faulted task would otherwise make
+            // every later web-pane open fail for the whole process lifetime. Clear it so the next
+            // open retries from scratch; the awaiting WebView2Surface still degrades to its inline
+            // "runtime required" panel for this attempt.
+            lock (_webView2EnvironmentLock)
+            {
+                _webView2Environment = null;
+            }
+            throw;
+        }
+    }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {

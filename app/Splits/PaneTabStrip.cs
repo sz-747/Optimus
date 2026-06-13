@@ -22,6 +22,10 @@ internal sealed class PaneTabStrip : Grid
 {
     private const double StripHeight = 32.0;
 
+    // Segoe MDL2 Assets "Globe" glyph (U+E774) — the web-pane affordance icon (p6 U4). Rendered with
+    // Tokens.IconFont so it shows as a crisp monochrome browser glyph, not a color emoji.
+    private const string GlobeGlyph = "";
+
     // Unread-notification dot (plan Phase 3 U7): a small magenta marker in a fixed leading slot,
     // dedicated to "unread" (DESIGN.md RISK #2) so it never collides with the teal focus border or
     // the blue pr-open badge. The slot is always reserved (constant width) so toggling unread never
@@ -40,6 +44,9 @@ internal sealed class PaneTabStrip : Grid
 
     /// <summary>Raised when the user clicks the trailing "+" button.</summary>
     public event Action? NewTabRequested;
+
+    /// <summary>Raised when the user clicks the "web" globe button — open a WebView2 pane (p6 U4).</summary>
+    public event Action? NewWebPaneRequested;
 
     /// <summary>Raised when the user clicks the split-right button (side-by-side split).</summary>
     public event Action? SplitRightRequested;
@@ -88,6 +95,16 @@ internal sealed class PaneTabStrip : Grid
         _zoomButton = MakeFlatButton("⤢", $"Zoom ({ShortcutMap.DescribeChord(ShortcutAction.ToggleZoom)})");
         _zoomButton.Click += (_, _) => ZoomToggleRequested?.Invoke();
         actions.Children.Add(_zoomButton);
+
+        // Web pane affordance (p6 U4): a globe glyph from the Windows system icon font, so it reads
+        // as "browser" in monochrome without an emoji color glyph. Its tooltip carries the live
+        // Ctrl+Shift+G chord (sourced from ShortcutMap so it never drifts), exactly like the split
+        // buttons above. The actual open is routed through PaneView → WorkspaceView (the surface
+        // plane), since the model-plane controller can't mint a typed surface.
+        Button newWeb = MakeFlatButton(
+            GlobeGlyph, $"New web pane ({ShortcutMap.DescribeChord(ShortcutAction.NewWebTab)})", Tokens.IconFont);
+        newWeb.Click += (_, _) => NewWebPaneRequested?.Invoke();
+        actions.Children.Add(newWeb);
 
         Button newTab = MakeFlatButton("+", "New tab");
         newTab.Click += (_, _) => NewTabRequested?.Invoke();
@@ -173,11 +190,16 @@ internal sealed class PaneTabStrip : Grid
         return chip;
     }
 
-    private static Button MakeFlatButton(string glyph, string tooltip)
+    private static Button MakeFlatButton(string glyph, string tooltip, FontFamily? iconFont = null)
     {
+        var label = new TextBlock { Text = glyph, FontSize = Tokens.FontMeta };
+        if (iconFont is not null)
+        {
+            label.FontFamily = iconFont; // icon-font glyphs (e.g. the web globe) render from Segoe MDL2 Assets
+        }
         var button = new Button
         {
-            Content = new TextBlock { Text = glyph, FontSize = Tokens.FontMeta },
+            Content = label,
             Background = Tokens.Transparent,
             BorderThickness = new Thickness(0),
             Foreground = Tokens.TextMuted,
