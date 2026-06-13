@@ -80,6 +80,12 @@ Failure triage:
 > the window after spawning ≥3 terminals — the process must exit within ~5 s with
 > **code 0** and leave **no** Event Log → Application → "Application Error" entry.
 > A lingering process or an Application Error is a res U4 regression.
+>
+> **iGPU caveat:** the crash is a timing race and did **not** reproduce on the dev
+> laptop's integrated graphics even with the *pre-fix* engine — fast frame retirement
+> never lost the race there. A clean run on an iGPU therefore proves "no regression,"
+> not "race fixed." To actually exercise the failure window, run this check on a
+> discrete-GPU machine (or under heavy render load) where teardown can outrun the GPU.
 
 ## 3. Smoke the installer
 
