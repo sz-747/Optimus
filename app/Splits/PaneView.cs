@@ -46,6 +46,9 @@ internal sealed class PaneView : UserControl
     private readonly SplitTreeController _controller;
     private readonly SurfaceManager _surfaces;
     private readonly Func<SurfaceId, bool> _isUnread;
+    // Opening a web pane needs the surface plane (a typed factory), which only WorkspaceView owns;
+    // PaneView routes the strip's globe button up through this callback (p6 U4).
+    private readonly Action<PaneId> _openWebPane;
 
     private DispatcherTimer? _flashTimer;
 
@@ -72,16 +75,25 @@ internal sealed class PaneView : UserControl
     /// <summary>The model pane this view renders.</summary>
     public PaneId PaneId => _paneId;
 
-    public PaneView(PaneId paneId, SplitTreeController controller, SurfaceManager surfaces, Func<SurfaceId, bool> isUnread)
+    public PaneView(
+        PaneId paneId,
+        SplitTreeController controller,
+        SurfaceManager surfaces,
+        Func<SurfaceId, bool> isUnread,
+        Action<PaneId> openWebPane)
     {
         _paneId = paneId;
         _controller = controller;
         _surfaces = surfaces;
         _isUnread = isUnread;
+        _openWebPane = openWebPane;
 
         _strip.TabSelected += id => _controller.SelectTab(_paneId, id);
         _strip.TabClosed += id => _controller.CloseTab(id);
         _strip.NewTabRequested += () => _controller.NewTab(_paneId);
+        // Web pane (p6 U4): routed up to WorkspaceView, which sets the pending surface kind and then
+        // creates the tab — acting on this pane (the strip the button belongs to), like the splits.
+        _strip.NewWebPaneRequested += () => _openWebPane(_paneId);
 
         // Discoverable split/zoom buttons: focus this pane, then run the same action the keyboard
         // chord runs, so a button can never drift from its shortcut (R2) and always acts on the pane

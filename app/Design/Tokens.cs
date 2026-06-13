@@ -91,6 +91,11 @@ internal static class Tokens
     /// <summary>Cascadia Mono — metadata and counts (tabular figures align "3/5", "#42").</summary>
     public static readonly FontFamily Mono = new("Cascadia Mono");
 
+    /// <summary>Segoe MDL2 Assets — the Windows system icon font, for monochrome chrome affordance
+    /// glyphs (e.g. the tab-strip "web" globe, p6 U4). Ships with Windows 10+; keeps affordance icons
+    /// crisp and on-theme without an emoji color glyph. See DESIGN.md typography note.</summary>
+    public static readonly FontFamily IconFont = new("Segoe MDL2 Assets");
+
     /// <summary>`caption` 10px — badge text, smallest meta.</summary>
     public const double FontCaption = 10;
 

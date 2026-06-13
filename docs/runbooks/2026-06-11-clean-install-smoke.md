@@ -99,9 +99,46 @@ Run `OptimusSetup-<version>.exe` in the clean environment:
    the runtime, the `pv` registry value now exists (see
    [installer/README.md](../../installer/README.md) for the exact keys).
    Without the bundle, setup must complete fine anyway — WebView2 is only
-   needed by the future U4 pane, never by the terminal itself.
+   needed by the web pane (p6 U4), never by the terminal itself.
 5. Uninstall from Settings → Apps: app folder and PATH entry removed.
    `%LOCALAPPDATA%\optimus` (calibration) intentionally survives uninstall.
+
+## 3a. Smoke the WebView2 pane (p6 U4)
+
+The web pane is the second surface kind. It rides the **same capacity choke point**
+as a terminal — one pane = one safe-zone slot — so the headline check is still the
+indicator: opening a browser pane must increment current usage and respect the cap,
+exactly like spawning a terminal.
+
+With the app up (publish-folder or installed):
+
+1. **Open a web pane.** Press **Ctrl+Shift+G**, or click the **globe** button in a
+   pane's tab-strip action cluster (left of "+"). A new tab opens with an address
+   bar above the content area.
+2. **Capacity tracks it.** The sidebar indicator's *current* count goes **up by one**
+   when the pane opens and **down by one** when its tab is closed — the web pane is
+   admitted and released through the same governor as a terminal (the whole point of
+   it being an `ISurface` behind `SurfaceManager.TryCreateSurface`). At the safe-zone
+   cap, opening a web pane is **refused gracefully** (no new surface, no crash), same
+   as a terminal.
+3. **Navigate to a heavy site.** Type a URL (e.g. a media-heavy page) and press Enter.
+   It loads; the tab title updates to the page title. The capacity indicator keeps
+   updating live (the ticker still drives while a page renders) and does **not**
+   double-count or stall.
+4. **Runtime fail-open.** On a machine **without** the WebView2 Evergreen runtime,
+   the pane shows the inline **"WebView2 runtime required"** panel with an install
+   button — and terminals keep spawning normally. A missing runtime must never crash
+   the app or block the terminal path (installer contract §3).
+5. **Clean shutdown.** Close the window with a web pane open (ideally after loading a
+   heavy site). The process must exit within ~5 s with **code 0** and write **no**
+   Event Log "Application Error" entry — the web surface's `Shutdown()` closes its
+   CoreWebView2 / browser process in the same `SurfaceManager.DisposeAll` teardown
+   pass as the engines (R9). A lingering browser process (`msedgewebview2.exe`) after
+   exit is a regression.
+
+The per-user UDF lands at `%LOCALAPPDATA%\optimus\webview2\` (the unpackaged default
+UDF is non-writable, so the app sets an explicit one — installer contract §4); confirm
+it appears after first opening a web pane.
 
 ## 4. Sign-off line for the tracker
 

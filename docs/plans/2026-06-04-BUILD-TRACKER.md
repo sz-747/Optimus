@@ -183,7 +183,7 @@ touches it — others stay disjoint.
   `FontSize`, whitelisting only `Tokens.cs`)
   _Mandated by CLAUDE.md R5. Single-owner per file — no overlap with U4._
 
-- [ ] **p6 U4** — WebView2 pane (`Microsoft.UI.Xaml.Controls.WebView2`). MUST
+- [x] **p6 U4** — WebView2 pane (`Microsoft.UI.Xaml.Controls.WebView2`). MUST
   set a per-user writable UDF via `CoreWebView2Environment.CreateWithOptionsAsync`
   (unpackaged default UDF under the exe dir is non-writable and the init
   throws). Detect/redistribute the Evergreen runtime per the U3 bootstrap
@@ -191,7 +191,7 @@ touches it — others stay disjoint.
   Worktree: `wt-p6-u4-webview2-pane` · Branch: `feat/p6-u4-webview2-pane`
   Files: new `app/Splits/WebView2Surface.cs` (mirror `TerminalPane` lifecycle),
   `core/Splits/SurfaceManager.cs` registration, `app/App.xaml.cs` UDF init.
-  PR: _none yet_ · Merge: _—_
+  PR: #11 · Merge: _on merge of #11_
   _Verification: open a WebView2 pane in a workspace, navigate to a heavy site,
   capacity indicator still updates, ticker doesn't double-fire, shutdown clean._
 
@@ -264,5 +264,7 @@ A red gate is the end of the unit; fix it before opening a PR.
 - 2026-06-12 · feat/p6-u1-renderer-polish · p6 U1 · PR #9 · Renderer polish: explicit monospace fallback chain (Cascadia Code → Cascadia Mono → Consolas; fontdb's `Family::Monospace` default on Windows is **Courier New** — logged to memory per R6) unlocking calt ligatures + per-script emoji/CJK fallback; frame-signature damage skip (rows + quads + geometry + palette defaults) drops the entire GPU pass on unchanged frames, reset on resize/DPI/reconfigure and stored only after a successful present. Gates: cargo 25 (floor 19 + 6 new headless shaping/signature tests), dotnet 245, app build 0W/0E. Codex review (sandboxed; failure-mode analysis): 1 real find taken — palette defaults (`default_fg`/`default_bg`) missing from the signature would freeze OSC 10/11 palette swaps; fixed in `96b6a95` + regression test. Honest scope: subpixel AA not feasible in glyphon (grayscale-in-sRGB retained); damage regions = frame-level skip, no partial present. Manual A/B emoji/ligature screenshot + frame timings deferred to the live smoke alongside res U4 (release-exit crash sits in the same teardown path).
 
 - 2026-06-13 · fix/res-u4-release-engine-exit · res U4 · PR #10 · Release-exit D3D12 crash fixed in the engine teardown path. Root cause: `TerminalRenderer` released the wgpu/DX12 device while a frame was in flight → D3D12 deferred-destruction freed GPU-read resources → `0xC0000005` in `D3D12Core.dll` (release-only; debug drained in time). Fix (`e0cd1e9` + `d461d20`): `Drop` blocks on `device.poll(Wait)` (2 s bound) to drain the GPU, then releases resource layers (`quads`, `text`) before `panel` (surface → queue → device → instance); on wait-timeout the GPU fields are **leaked** (via `ManuallyDrop`) instead of released, since releasing a wedged device is the exact AV — keeps res U4's "no Application Error" bar even on timeout. FFI surface unchanged (no `NativeMethods.g.cs` churn). Gates: cargo 25, dotnet 245, app build 0W/0E. Codex review (read-only over diff): 1 [P2] (timeout branch fell through to device release), 0 [P1] — [P2] fixed by `d461d20`. Live verify (dev iGPU A/B): fixed build exits 0 / no Application Error (no regression), but the timing race did **not** reproduce on integrated graphics even pre-fix, so the fix is merged correct-by-construction — a true repro needs discrete-GPU/heavier-load timing (owner-approved merge).
+
+- 2026-06-13 · feat/p6-u4-webview2-pane · p6 U4 · PR #11 · WebView2 browser pane added as a second `ISurface` kind beside the terminals, admitted through the **same** RAM safe-zone choke point (one pane = one slot — capacity guarantee unchanged). Model plane stays kind-agnostic: `SurfaceManager` gains a per-kind `ISurfaceFactory` registry (Terminal from ctor, Web via `RegisterFactory`) + `TryCreateSurface(id, kind)`; kind-less overload still makes terminals. Race-free routing: `WorkspaceView` sets a transient `_pendingSurfaceKind` immediately before `controller.NewTab` (synchronous `SurfaceCreated` → `CreateSurfaceEngine` reads-and-resets it), guarded by a `finally`. `WebView2Surface` mirrors `TerminalPane` lifecycle (SurfaceLifecycleGuard attach-once/shutdown-once, teardown via SurfaceManager not XAML Unloaded). Per-user writable UDF `%LOCALAPPDATA%\optimus\webview2` via `CreateWithOptionsAsync`; missing Evergreen runtime fails open to an inline panel, never blocks terminals. Trigger: Ctrl+Shift+G + tab-strip globe button (`Tokens.IconFont`/Segoe MDL2 Assets, new DESIGN.md token + Decisions Log entry). Gates: dotnet 260 (floor 245), cargo 25, cargo build --lib clean, app build 0W/0E. Codex review (read-only over diff): 2 high-confidence finds, both fixed in-PR — (1) stale `_pendingSurfaceKind` if `NewTab` throws → `finally` reset; (2) a faulted shared WebView2 environment was memoized forever → clear cache on failure so the next open retries. Live GUI smoke (runbook §3a) handed to owner per the session's verification mode.
 
 Format per entry: `- YYYY-MM-DD · <session-id-or-branch> · <unit-id> · PR #<n> · <outcome>`

@@ -65,6 +65,12 @@ hunt for.
 - **UI / titles:** Segoe UI Variable — native Windows, no webfont. Correct default.
 - **Metadata (branch, PR#, status, progress, counts):** Cascadia Mono — ships with
   Windows, tabular figures. Aligns `#42`, `3/5`, branch names in the sidebar row.
+- **Chrome affordance icons:** Segoe MDL2 Assets (`Tokens.IconFont`) — the Windows
+  system icon font, for monochrome glyph buttons in the chrome (e.g. the tab-strip
+  "web" globe, p6 U4). Use it over an emoji glyph so affordance icons render as crisp,
+  on-theme monochrome marks that inherit `Foreground` (no fixed-color emoji). Ships
+  with Windows 10+; no webfont. Decorative split/zoom glyphs that already render as
+  plain Unicode (◨ ⬓ ⤢) stay as-is — `IconFont` is for the PUA icon glyphs.
 - **Terminal grid:** owned by the engine (monospace); not specified here.
 - **Scale (named; these are the sizes already in use):**
   | Token | px | Role |
@@ -185,6 +191,7 @@ added, redesign surfaces from scratch and drop semantic-color saturation ~15%.
 | 2026-06-10 | Sidebar row anticipates repo-grouping | Conductor shipped flat, then added group-by-repo at scale (0.35). Designing the row to accept a collapsible repo header now avoids a retrofit later. |
 | 2026-06-10 | Capacity indicator shipped; `Tokens.cs` seeded | RAM safe-zone plan U6/U7. Indicator escalation reuses semantic hues via `CapacityCalm`/`CapacityWarn`/`CapacityCap` aliases in `app/Design/Tokens.cs` rather than inventing new colors; `Tokens.cs` becomes the (partial) central token registry. |
 | 2026-06-12 | Older views migrated to `Tokens.cs`; RISK #2 applied; guard test added | res U3. `SidebarView`/`PaneTabStrip`/`PaneView`/`SplitTreeView` now consume named tokens (`Surface*`, `Text*`, `Git*`, `Pr*`, `Attention`, `Unread`, plus the existing `Font*` sizes). Pane flash → `Attention` teal; unread dot/badge → dedicated `Unread` magenta; `PrOpen` blue stops doubling as either. `tests/Design/TokensGuardTests.cs` fails the build on regression. |
+| 2026-06-13 | Add `Tokens.IconFont` (Segoe MDL2 Assets) for the web-pane affordance | p6 U4. The tab-strip globe button (and its runtime-missing fallback panel) needed a browser glyph. Chose the Windows system icon font over an emoji so the icon stays monochrome and inherits `Foreground` like the other chrome buttons. New token keeps it out of view code as a raw family string. The inline "runtime required" panel reuses existing `Surface*`/`Text*`/`Font*` tokens — no new colors. |
 
 ## Implementation note (applied)
 `app/Design/Tokens.cs` is the central token registry — the one place in the app

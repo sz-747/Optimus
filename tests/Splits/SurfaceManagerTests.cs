@@ -45,14 +45,15 @@ public sealed class SurfaceManagerTests
     private sealed class FakeFactory : ISurfaceFactory
     {
         private readonly List<string> _log;
+        private readonly string _label;
 
-        public FakeFactory(List<string> log) => _log = log;
+        public FakeFactory(List<string> log, string label = "create") => (_log, _label) = (log, label);
 
         public List<FakeSurface> Created { get; } = new();
 
         public ISurface Create(SurfaceId id, string? cwd, string? cmdline)
         {
-            _log.Add($"create:{id}");
+            _log.Add($"{_label}:{id}");
             var s = new FakeSurface(id, _log);
             Created.Add(s);
             return s;
@@ -122,6 +123,76 @@ public sealed class SurfaceManagerTests
 
         Assert.All(factory.Created, s => Assert.Equal(1, s.ShutdownCount));
         Assert.Equal(0, manager.Count);
+    }
+
+    // ---- Per-kind factory routing (p6 U4) ----------------------------------------------------
+
+    [Fact] // A registered kind is realised by its own factory; the default kind by the ctor factory.
+    public void TryCreateSurface_routes_each_kind_to_its_registered_factory()
+    {
+        var log = new List<string>();
+        var terminalFactory = new FakeFactory(log, "terminal");
+        var webFactory = new FakeFactory(log, "web");
+        var manager = new SurfaceManager(terminalFactory); // ctor factory == default (Terminal)
+        manager.RegisterFactory(SurfaceKind.Web, webFactory);
+
+        manager.TryCreateSurface(new SurfaceId(1), SurfaceKind.Terminal);
+        manager.TryCreateSurface(new SurfaceId(2), SurfaceKind.Web);
+
+        Assert.Single(terminalFactory.Created); // id 1 came from the terminal factory
+        Assert.Single(webFactory.Created);      // id 2 came from the web factory
+        Assert.Equal(new SurfaceId(1), terminalFactory.Created[0].Id);
+        Assert.Equal(new SurfaceId(2), webFactory.Created[0].Id);
+    }
+
+    [Fact] // The default overload (and CreateSurface) still produce terminals — no behavior drift.
+    public void TryCreateSurface_default_overload_uses_the_terminal_factory()
+    {
+        var log = new List<string>();
+        var terminalFactory = new FakeFactory(log, "terminal");
+        var webFactory = new FakeFactory(log, "web");
+        var manager = new SurfaceManager(terminalFactory);
+        manager.RegisterFactory(SurfaceKind.Web, webFactory);
+
+        manager.TryCreateSurface(new SurfaceId(1)); // kind-less overload
+
+        Assert.Single(terminalFactory.Created);
+        Assert.Empty(webFactory.Created);
+    }
+
+    [Fact] // Idempotency ignores kind: a live id returns its first instance and consumes no second slot.
+    public void TryCreateSurface_is_idempotent_per_id_regardless_of_kind()
+    {
+        var log = new List<string>();
+        var terminalFactory = new FakeFactory(log, "terminal");
+        var webFactory = new FakeFactory(log, "web");
+        var manager = new SurfaceManager(terminalFactory);
+        manager.RegisterFactory(SurfaceKind.Web, webFactory);
+
+        ISurface? first = manager.TryCreateSurface(new SurfaceId(1), SurfaceKind.Terminal);
+        ISurface? again = manager.TryCreateSurface(new SurfaceId(1), SurfaceKind.Web); // same id, other kind
+
+        Assert.Same(first, again);              // first kind wins; no rebuild
+        Assert.Single(terminalFactory.Created);
+        Assert.Empty(webFactory.Created);       // the web factory was never invoked
+        Assert.Equal(1, manager.Count);
+    }
+
+    [Fact] // An unregistered kind is a programmer error — fail loudly, do not silently fall back.
+    public void TryCreateSurface_throws_for_an_unregistered_kind()
+    {
+        var manager = new SurfaceManager(new FakeFactory(new List<string>()));
+
+        Assert.Throws<InvalidOperationException>(
+            () => manager.TryCreateSurface(new SurfaceId(1), SurfaceKind.Web)); // Web never registered
+    }
+
+    [Fact] // RegisterFactory rejects null so a misconfigured host fails at wiring, not at spawn time.
+    public void RegisterFactory_rejects_a_null_factory()
+    {
+        var manager = new SurfaceManager(new FakeFactory(new List<string>()));
+
+        Assert.Throws<ArgumentNullException>(() => manager.RegisterFactory(SurfaceKind.Web, null!));
     }
 
     // ---- SurfaceLifecycleGuard (R10 / KTD9 — re-parent correctness) --------------------------

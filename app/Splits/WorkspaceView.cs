@@ -31,6 +31,13 @@ public sealed class WorkspaceView : UserControl
     private readonly SplitTreeView _tree;
     private readonly ShortcutRouter _shortcuts;
 
+    // The model plane is surface-kind-agnostic: SplitTreeController.NewTab mints a bare SurfaceId and
+    // raises SurfaceCreated synchronously, on this (UI) thread, before NewTab returns. So to open a
+    // typed (web) surface we set this one-shot kind immediately before asking for the tab, and the
+    // SurfaceCreated → CreateSurfaceEngine handler reads-and-resets it. Default Terminal keeps every
+    // other spawn path (Phase-1 seed, "+", splits) producing terminals untouched (p6 U4).
+    private SurfaceKind _pendingSurfaceKind = SurfaceKind.Terminal;
+
     private readonly Dictionary<PaneId, PaneView> _panes = new();
     private readonly Dictionary<SurfaceId, string> _titles = new();
 
@@ -103,7 +110,11 @@ public sealed class WorkspaceView : UserControl
         _coordinator.Surfaced += OnSurfaced;
         _coordinator.FlashCleared += OnFlashCleared;
 
-        _shortcuts = new ShortcutRouter(_controller, _surfaces);
+        // Register the web surface factory alongside the terminal one (the ctor seeded Terminal).
+        // From here SurfaceManager can build either kind on request (p6 U4).
+        _surfaces.RegisterFactory(SurfaceKind.Web, new WebView2SurfaceFactory());
+
+        _shortcuts = new ShortcutRouter(_controller, _surfaces, onNewWebPane: OpenWebPane);
         _shortcuts.Attach(this);
 
         Content = _tree;
@@ -231,10 +242,16 @@ public sealed class WorkspaceView : UserControl
 
     private void CreateSurfaceEngine(SurfaceId id)
     {
+        // Read-and-reset the one-shot pending kind: the only window it is non-default is between
+        // OpenWebPaneInPane setting it and the synchronous SurfaceCreated landing here. Resetting
+        // immediately guarantees any subsequent spawn (re-seed, "+", split) falls back to Terminal.
+        SurfaceKind kind = _pendingSurfaceKind;
+        _pendingSurfaceKind = SurfaceKind.Terminal;
+
         // Capacity-gated (RAM safe-zone plan U5): at the cap the create is refused gracefully —
         // the model-plane pane stays engineless rather than crashing the machine by over-spawning.
         // U6 disables the spawn affordances before users normally hit this path.
-        ISurface? surface = _surfaces.TryCreateSurface(id); // default shell, inherited cwd (Phase-1 parity)
+        ISurface? surface = _surfaces.TryCreateSurface(id, kind); // default shell, inherited cwd (Phase-1 parity)
         if (surface is null)
         {
             System.Diagnostics.Debug.WriteLine($"[capacity] surface {id} refused: safe-zone cap reached");
@@ -312,11 +329,40 @@ public sealed class WorkspaceView : UserControl
     {
         if (!_panes.TryGetValue(id, out PaneView? pane))
         {
-            pane = new PaneView(id, _controller, _surfaces, IsSurfaceUnread);
+            pane = new PaneView(id, _controller, _surfaces, IsSurfaceUnread, OpenWebPaneInPane);
             _panes[id] = pane;
         }
         return pane;
     }
+
+    /// <summary>
+    /// Open a WebView2 pane (p6 U4) in <paramref name="pane"/>: focus it, flag the next surface as
+    /// <see cref="SurfaceKind.Web"/>, then ask the controller for a new tab. NewTab raises
+    /// SurfaceCreated synchronously, so <see cref="CreateSurfaceEngine"/> reads the flag while it is
+    /// still set and builds a browser surface instead of a terminal — no async window, no race.
+    /// </summary>
+    public void OpenWebPaneInPane(PaneId pane)
+    {
+        if (_controller.FocusedPane != pane)
+        {
+            _controller.FocusPane(pane);
+        }
+        _pendingSurfaceKind = SurfaceKind.Web;
+        try
+        {
+            // NewTab raises SurfaceCreated synchronously → CreateSurfaceEngine reads-and-resets the
+            // pending kind. The finally is belt-and-suspenders: if NewTab ever throws before that
+            // handler runs, the flag must not survive to mis-type the next (terminal) spawn.
+            _controller.NewTab(pane);
+        }
+        finally
+        {
+            _pendingSurfaceKind = SurfaceKind.Terminal;
+        }
+    }
+
+    /// <summary>Open a web pane in the focused pane — the Ctrl+Shift+G entry point (p6 U4).</summary>
+    public void OpenWebPane() => OpenWebPaneInPane(_controller.FocusedPane);
 
     // ---- Notification plane ------------------------------------------------------------------
 
