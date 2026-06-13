@@ -148,7 +148,7 @@ touches it — others stay disjoint.
   _Verification: `dotnet publish` succeeds; smoke on a clean VM or a fresh local
   user profile; tracker the WebView2 runtime detection contract for U4._
 
-- [ ] **res U4** — Release-profile engine crashes on exit: published Release
+- [x] **res U4** — Release-profile engine crashes on exit: published Release
   app lingers ~60 s after window close, then dies 0xC0000005 in
   `D3D12Core.dll` (wgpu/D3D12 teardown race). Discovered by the p6 U3 publish
   smoke; debug-engine swap into the same publish exits 0 in ~2 s, pinning the
@@ -158,10 +158,13 @@ touches it — others stay disjoint.
   Worktree: `wt-res-u4-release-engine-exit` · Branch: `fix/res-u4-release-engine-exit`
   Files: `engine/src/render/` (device/surface teardown), possibly
   `app/Splits/` shutdown ordering.
-  PR: _none yet_ · Merge: _—_
+  PR: #10 · Merge: _on merge of #10_
   _Verification: published Release app exits code 0 within ~5 s of window
   close, no Application Error event; smoke per
-  `docs/runbooks/2026-06-11-clean-install-smoke.md` §2._
+  `docs/runbooks/2026-06-11-clean-install-smoke.md` §2. Live A/B on dev iGPU:
+  fixed build exits 0 / no Application Error (no regression); race did not
+  reproduce on integrated graphics even pre-fix, so the fix is merged
+  correct-by-construction — full repro needs discrete-GPU/heavier-load timing._
 
 ### Wave 2 — Chrome surface area  (mixed)
 
@@ -259,5 +262,7 @@ A red gate is the end of the unit; fix it before opening a PR.
 - 2026-06-12 · feat/p6-u3-packaging · p6 U3 · PR #7 · Packaging spike: `build.ps1 -Publish` verified end-to-end (self-contained app publish 494 files incl. `Optimus.pri` + `optimus_engine.dll`; CLI now publishes self-contained single-file 68 MB); landed `installer/optimus.iss` (per-user Inno Setup, opt-in PATH, conditional WebView2 Evergreen bootstrap) + `installer/README.md` (WebView2 detection/bootstrap/UDF contract for p6 U4) + clean-install runbook. Gates: dotnet 244, cargo 19, app build 0W/0E. Published smoke: UI fully composed (sidebar 1/17 indicator, live terminal), capacity.json saves on close. KEY FINDING → res U4: release-profile engine AVs 0xC0000005 in D3D12Core.dll ~60 s after window close (debug-engine swap exits 0 in 2 s); filed as new unit, documented in runbook. Inno compile untested locally (no iscc on dev machine).
 
 - 2026-06-12 · feat/p6-u1-renderer-polish · p6 U1 · PR #9 · Renderer polish: explicit monospace fallback chain (Cascadia Code → Cascadia Mono → Consolas; fontdb's `Family::Monospace` default on Windows is **Courier New** — logged to memory per R6) unlocking calt ligatures + per-script emoji/CJK fallback; frame-signature damage skip (rows + quads + geometry + palette defaults) drops the entire GPU pass on unchanged frames, reset on resize/DPI/reconfigure and stored only after a successful present. Gates: cargo 25 (floor 19 + 6 new headless shaping/signature tests), dotnet 245, app build 0W/0E. Codex review (sandboxed; failure-mode analysis): 1 real find taken — palette defaults (`default_fg`/`default_bg`) missing from the signature would freeze OSC 10/11 palette swaps; fixed in `96b6a95` + regression test. Honest scope: subpixel AA not feasible in glyphon (grayscale-in-sRGB retained); damage regions = frame-level skip, no partial present. Manual A/B emoji/ligature screenshot + frame timings deferred to the live smoke alongside res U4 (release-exit crash sits in the same teardown path).
+
+- 2026-06-13 · fix/res-u4-release-engine-exit · res U4 · PR #10 · Release-exit D3D12 crash fixed in the engine teardown path. Root cause: `TerminalRenderer` released the wgpu/DX12 device while a frame was in flight → D3D12 deferred-destruction freed GPU-read resources → `0xC0000005` in `D3D12Core.dll` (release-only; debug drained in time). Fix (`e0cd1e9` + `d461d20`): `Drop` blocks on `device.poll(Wait)` (2 s bound) to drain the GPU, then releases resource layers (`quads`, `text`) before `panel` (surface → queue → device → instance); on wait-timeout the GPU fields are **leaked** (via `ManuallyDrop`) instead of released, since releasing a wedged device is the exact AV — keeps res U4's "no Application Error" bar even on timeout. FFI surface unchanged (no `NativeMethods.g.cs` churn). Gates: cargo 25, dotnet 245, app build 0W/0E. Codex review (read-only over diff): 1 [P2] (timeout branch fell through to device release), 0 [P1] — [P2] fixed by `d461d20`. Live verify (dev iGPU A/B): fixed build exits 0 / no Application Error (no regression), but the timing race did **not** reproduce on integrated graphics even pre-fix, so the fix is merged correct-by-construction — a true repro needs discrete-GPU/heavier-load timing (owner-approved merge).
 
 Format per entry: `- YYYY-MM-DD · <session-id-or-branch> · <unit-id> · PR #<n> · <outcome>`

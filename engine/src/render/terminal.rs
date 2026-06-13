@@ -10,6 +10,8 @@
 
 use std::ffi::c_void;
 
+use std::mem::ManuallyDrop;
+
 use glyphon::{Color, TextArea};
 use termwiz::color::{ColorAttribute, SrgbaTuple};
 use termwiz::surface::CursorVisibility;
@@ -59,9 +61,15 @@ struct CachedRow {
 }
 
 pub struct TerminalRenderer {
-    panel: PanelRenderer,
-    quads: QuadLayer,
-    text: TextLayer,
+    // The GPU-bearing fields (`quads`, `text`, `panel`) are wrapped in `ManuallyDrop` so `Drop`
+    // (below) controls *whether and in what order* they tear down. On a clean exit they drop in
+    // dependency order — resource layers (`quads`, `text`) first, then `panel` (device/queue/
+    // surface) — after the GPU has gone idle. On a wait-timeout (a wedged GPU) they are leaked
+    // instead of released, because releasing the D3D12 device mid-flight is the use-after-free
+    // res U4 exists to prevent. `quads`/`text` are built from `panel.device`, so they must
+    // release while that device is still alive — hence the order. (res U4)
+    quads: ManuallyDrop<QuadLayer>,
+    text: ManuallyDrop<TextLayer>,
     /// Shaped-buffer cache, indexed by viewport row (0 = top visible row). Slots are `None`
     /// only transiently while a frame is being built. Cleared on resize/DPI change.
     row_cache: Vec<Option<CachedRow>>,
@@ -72,6 +80,53 @@ pub struct TerminalRenderer {
     /// queries, repeated identical status lines) become free. Reset whenever the surface
     /// could have lost its contents (resize, DPI change, outdated/lost reconfigure).
     last_frame_key: Option<u64>,
+    /// Owns the DX12 device, queue, and swapchain surface. Released last (after the GPU resource
+    /// layers above) on a clean exit, or leaked on a wait-timeout (see the struct-level note and
+    /// `Drop`).
+    panel: ManuallyDrop<PanelRenderer>,
+}
+
+impl Drop for TerminalRenderer {
+    /// Block until the GPU has retired all submitted work *before* any field drops.
+    ///
+    /// Tearing the wgpu device (and its DX12 swapchain) down while a frame is still in flight
+    /// lets D3D12's deferred-destruction queue free resources the GPU is still reading — a
+    /// use-after-free that surfaces as an `0xC0000005` access violation inside `D3D12Core.dll`
+    /// roughly a minute after the window closes. Optimized (release) engine builds queue and
+    /// retire frames fast enough to lose this race; debug builds happen to drain in time, which
+    /// is why the crash was release-only (res U4). Waiting for the device to go idle here drains
+    /// the queue first, so the field drops that follow — resource layers, then `panel`
+    /// (surface → queue → device → instance) — all run against quiesced hardware.
+    ///
+    /// The wait is bounded so window close can't hang on a wedged GPU. But on timeout we do
+    /// *not* fall through to releasing the device — that release is the exact use-after-free, and
+    /// it would write the Application Error event res U4 exists to suppress. Instead we leak the
+    /// GPU-bearing fields: the process is exiting, so the OS reclaims the address space and the
+    /// GPU resources, with nothing freed while the GPU is still reading it.
+    fn drop(&mut self) {
+        let drained = self
+            .panel
+            .device
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(2)),
+            })
+            .is_ok();
+
+        if drained {
+            // GPU is idle — tear down in dependency order: resource layers first (`quads`,
+            // `text`), then the device-owning `panel` (surface → queue → device → instance).
+            // SAFETY: each field is dropped exactly once here and never touched again (the
+            // `ManuallyDrop` fields are not auto-dropped after this returns).
+            unsafe {
+                ManuallyDrop::drop(&mut self.quads);
+                ManuallyDrop::drop(&mut self.text);
+                ManuallyDrop::drop(&mut self.panel);
+            }
+        }
+        // else: wait timed out — leak `quads`/`text`/`panel` (do nothing). Releasing a device
+        // whose GPU never went idle is what triggers the 0xC0000005 in D3D12Core.dll.
+    }
 }
 
 impl TerminalRenderer {
@@ -87,9 +142,9 @@ impl TerminalRenderer {
         let quads = QuadLayer::new(&panel.device, panel.format(), width, height);
         let text = TextLayer::new(&panel.device, &panel.queue, panel.format(), dpi_scale);
         Ok(Self {
-            panel,
-            quads,
-            text,
+            panel: ManuallyDrop::new(panel),
+            quads: ManuallyDrop::new(quads),
+            text: ManuallyDrop::new(text),
             row_cache: Vec::new(),
             last_frame_key: None,
         })
