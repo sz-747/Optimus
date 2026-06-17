@@ -223,6 +223,9 @@ internal sealed class WebView2Surface : UserControl, ISurface
             return;
         }
         _address.Text = url;
+        // Remember the request so a navigation typed before the core is ready is not lost: when
+        // InitializeAsync completes it navigates to (and shows) _pendingUrl, not the stale initial URL.
+        _pendingUrl = url;
         Navigate(url);
     }
 
