@@ -828,3 +828,437 @@ mod tests {
         assert!(effects.desktop);
     }
 }
+
+use crate::domain::split_tree::{PaneLeaf, TreeSnapshot};
+
+/// A notification that has cleared policy and is ready to surface. Carries the recorded
+/// [`TerminalNotification`] plus the two view-side effects the surface plane acts on:
+/// whether to raise an OS toast and whether to flash the owning pane. The store/unread
+/// state is read separately off [`NotificationCoordinator::store`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SurfacedNotification {
+    pub notification: TerminalNotification,
+    pub show_toast: bool,
+    pub flash: bool,
+}
+
+/// The result of one [`NotificationCoordinator::drain`]: every notification surfaced by
+/// this pass (the C# `Surfaced` event, ported as a returned list) plus whether entries
+/// remain pending (cap hit) so the caller can reschedule another drain.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct DrainOutcome {
+    pub surfaced: Vec<SurfacedNotification>,
+    pub more_pending: bool,
+}
+
+/// The notification-plane orchestrator: the single seam that wires the queue, the store,
+/// and the policy together and exposes a tiny, UI-free surface the shell drives. It is
+/// the integration point that makes the whole feature provable without a dispatcher or a
+/// live window.
+///
+/// Flow: the surface plane calls [`on_notification`](Self::on_notification) for every
+/// raw engine toast (it only enqueues — cheap, allocation-light, never inspects tree
+/// state). The shell then calls [`drain`](Self::drain) with a freshly captured
+/// [`TreeSnapshot`]; the coordinator re-derives each notification's owning pane and
+/// visibility *at delivery time* from that snapshot, drops orphans whose surface has
+/// since closed, asks the [`NotificationPolicy`] what to do, records the survivors, and
+/// returns them for the view to render. Deriving context at drain time (not enqueue
+/// time) is the deliberate correctness choice: focus/visibility may change between the
+/// engine event and the debounced drain.
+///
+/// Everything here runs on the UI thread: the queue and store hold no thread primitives,
+/// and the only async hop (scheduling the drain) lives in the shell.
+#[derive(Default)]
+pub struct NotificationCoordinator {
+    store: NotificationStore,
+    queue: NotificationQueue,
+    policy: NotificationPolicy,
+}
+
+impl NotificationCoordinator {
+    /// Coordinator with the default all-enabled policy.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Coordinator over a caller-supplied policy (the hook-injection seam).
+    pub fn with_policy(policy: NotificationPolicy) -> Self {
+        Self {
+            policy,
+            ..Self::default()
+        }
+    }
+
+    /// The recorded-notification store (unread counts, per-pane indexes, history).
+    pub fn store(&self) -> &NotificationStore {
+        &self.store
+    }
+
+    /// Whether `surface` currently has an unread notification (badge probe).
+    pub fn is_surface_unread(&self, surface: SurfaceId) -> bool {
+        self.store.is_surface_unread(surface)
+    }
+
+    /// Newest notification per pane regardless of read state (the sidebar feed).
+    pub fn latest_by_pane(&self) -> &HashMap<PaneId, TerminalNotification> {
+        self.store.latest_by_pane()
+    }
+
+    /// Currently-unread `(pane, surface)` keys (the tab-dot / pane-badge source).
+    pub fn unread_by_pane_surface(&self) -> &HashSet<(PaneId, SurfaceId)> {
+        self.store.unread_by_pane_surface()
+    }
+
+    /// Enqueue a raw engine notification for `surface`. Pure fan-in: it never touches
+    /// tree/focus state (that is re-derived at [`drain`](Self::drain) time), so it is
+    /// safe to call from the host-event path before any snapshot is captured. Bursts
+    /// coalesce per surface when `coalesce` is set.
+    pub fn on_notification(
+        &mut self,
+        surface: SurfaceId,
+        payload: SurfaceNotification,
+        coalesce: bool,
+    ) {
+        self.queue.enqueue(surface, payload, coalesce);
+    }
+
+    /// Recorded notifications from newest to oldest as a direct UI payload.
+    pub fn list_notifications(&self) -> &[TerminalNotification] {
+        self.store.items()
+    }
+
+    /// The newest unread notification's `(pane, surface)`, or `None` when everything is
+    /// read (the jump-to-unread socket action).
+    pub fn jump_to_unread_target(&self) -> Option<(PaneId, SurfaceId)> {
+        self.store
+            .items()
+            .iter()
+            .find(|n| !n.is_read)
+            .map(|n| (n.pane_id, n.surface_id))
+    }
+
+    /// Mark the notification with `id` read, if present.
+    pub fn mark_read(&mut self, id: NotificationId) {
+        self.store.mark_read(id);
+    }
+
+    /// Mark `surface`'s notification (if any) read.
+    pub fn mark_read_for_surface(&mut self, surface: SurfaceId) {
+        self.store.mark_read_for_surface(surface);
+    }
+
+    /// Mark every recorded notification read.
+    pub fn mark_all_read(&mut self) {
+        let unread: Vec<NotificationId> = self
+            .store
+            .items()
+            .iter()
+            .filter(|n| !n.is_read)
+            .map(|n| n.id)
+            .collect();
+        for id in unread {
+            self.store.mark_read(id);
+        }
+    }
+
+    /// Remove the notification with `id`, if present.
+    pub fn dismiss_notification(&mut self, id: NotificationId) {
+        self.store.remove(id);
+    }
+
+    /// Drop `surface`'s notification (if any).
+    pub fn dismiss_notification_for_surface(&mut self, surface: SurfaceId) {
+        self.store.clear_for_surface(surface);
+    }
+
+    /// Remove every already-read notification.
+    pub fn dismiss_all_read(&mut self) {
+        let read: Vec<NotificationId> = self
+            .store
+            .items()
+            .iter()
+            .filter(|n| n.is_read)
+            .map(|n| n.id)
+            .collect();
+        for id in read {
+            self.store.remove(id);
+        }
+    }
+
+    /// Drop every recorded notification.
+    pub fn clear_notifications(&mut self) {
+        self.store.clear_all();
+    }
+
+    /// Deliver the pending queue against `snapshot`. Orphaned entries (surface no longer
+    /// in the tree) are dropped; each survivor is recorded per policy and returned in
+    /// the outcome's `surfaced` list (the C# `Surfaced` event, ported as data).
+    /// `more_pending` reports whether entries remain (cap hit), so the caller can
+    /// reschedule another drain. `app_focused` is whether the app window is foreground
+    /// right now.
+    pub fn drain(&mut self, snapshot: &TreeSnapshot, app_focused: bool) -> DrainOutcome {
+        let Self {
+            store,
+            queue,
+            policy,
+        } = self;
+        let mut surfaced = Vec::new();
+        let more_pending = queue.drain(
+            |surface| {
+                snapshot
+                    .root
+                    .as_ref()
+                    .is_some_and(|root| root.find_containing(surface).is_some())
+            },
+            |entry| {
+                // The surface is guaranteed live here (the queue's liveness probe
+                // dropped orphans), so the leaf lookup cannot fail.
+                let leaf = match snapshot
+                    .root
+                    .as_ref()
+                    .and_then(|root| root.find_containing(entry.surface))
+                {
+                    Some(leaf) => leaf,
+                    None => return,
+                };
+                let context = Self::derive_context(snapshot, leaf, entry.surface, app_focused);
+                let effects = policy.decide(&entry.payload, context);
+
+                let mut n =
+                    TerminalNotification::create(entry.surface, leaf.id, entry.payload.title);
+                n.subtitle = entry.payload.subtitle;
+                n.body = entry.payload.body;
+                n.pane_flash = effects.pane_flash;
+                n.is_read = !effects.mark_unread;
+
+                if effects.record {
+                    store.add(n.clone());
+                }
+
+                surfaced.push(SurfacedNotification {
+                    notification: n,
+                    show_toast: effects.desktop,
+                    flash: effects.pane_flash,
+                });
+            },
+        );
+        DrainOutcome {
+            surfaced,
+            more_pending,
+        }
+    }
+
+    /// Mark the now-focused surface read and clear its pane flash. Called by the shell
+    /// on every focus change. Returns the pane whose flash was just cleared (the C#
+    /// `FlashCleared` event, ported as data), or `None` when the focused pane has no
+    /// unread notification — so it is safe to call unconditionally.
+    pub fn on_focus_changed(&mut self, snapshot: &TreeSnapshot) -> Option<PaneId> {
+        let surface = snapshot.focused_surface()?;
+        if self.store.is_surface_unread(surface) {
+            self.store.mark_read_for_surface(surface);
+            Some(snapshot.focused_pane)
+        } else {
+            None
+        }
+    }
+
+    // Whether the notification's surface is in front of the user right now: app
+    // foreground, the surface is the focused one, and it is actually visible (its tab is
+    // selected and no other pane is zoomed over it). Re-derived from the live snapshot
+    // at delivery time.
+    fn derive_context(
+        snapshot: &TreeSnapshot,
+        leaf: &PaneLeaf,
+        surface: SurfaceId,
+        app_focused: bool,
+    ) -> DeliveryContext {
+        let focused = snapshot.focused_surface() == Some(surface);
+        let visible = leaf.selected == surface
+            && match snapshot.zoomed_pane {
+                None => true,
+                Some(zoomed) => zoomed == leaf.id,
+            };
+        DeliveryContext {
+            app_focused,
+            surface_focused: focused,
+            surface_visible: visible,
+        }
+    }
+}
+
+#[cfg(test)]
+mod coordinator_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::domain::ids::BranchId;
+    use crate::domain::split_tree::{Orientation, SplitBranch, SplitNode};
+
+    // Coverage for the coordinator — the integration seam that makes the whole feature
+    // provable in the domain core (R2, R3, R4, R5, R6). Every branch (suppress, orphan
+    // drop, coalesce, read-on-focus, record-off) is exercised against value
+    // `TreeSnapshot`s, with no UI, dispatcher, or live window.
+
+    const SA: SurfaceId = SurfaceId(1);
+    const SB: SurfaceId = SurfaceId(2);
+    const PA: PaneId = PaneId(1);
+    const PB: PaneId = PaneId(2);
+
+    // Two side-by-side panes, each with one surface; nothing zoomed unless given.
+    fn two_panes(focused: PaneId, zoomed: Option<PaneId>) -> TreeSnapshot {
+        let pane_a = PaneLeaf {
+            id: PA,
+            tabs: vec![SA],
+            selected: SA,
+        };
+        let pane_b = PaneLeaf {
+            id: PB,
+            tabs: vec![SB],
+            selected: SB,
+        };
+        let root = SplitNode::Branch(SplitBranch {
+            id: BranchId(1),
+            orientation: Orientation::Vertical,
+            first: Arc::new(SplitNode::Leaf(pane_a)),
+            second: Arc::new(SplitNode::Leaf(pane_b)),
+            divider_position: 0.5,
+        });
+        TreeSnapshot {
+            root: Some(Arc::new(root)),
+            focused_pane: focused,
+            zoomed_pane: zoomed,
+            version: 1,
+        }
+    }
+
+    fn payload(title: &str) -> SurfaceNotification {
+        SurfaceNotification::new(title, "", "")
+    }
+
+    #[test] // Covers R2, R3, AE1.
+    fn notification_on_unfocused_surface_records_unread_and_requests_flash_and_toast() {
+        let mut coord = NotificationCoordinator::new();
+
+        let snap = two_panes(PA, None);
+        coord.on_notification(SB, payload("build done"), true); // SB is unfocused (A is focused)
+        let out = coord.drain(&snap, true);
+
+        assert!(coord.is_surface_unread(SB));
+        assert_eq!(out.surfaced.len(), 1);
+        assert!(out.surfaced[0].show_toast);
+        assert!(out.surfaced[0].flash);
+        assert!(!out.surfaced[0].notification.is_read);
+    }
+
+    #[test] // Covers R4, AE2.
+    fn notification_on_focused_visible_surface_records_read_and_no_toast() {
+        let mut coord = NotificationCoordinator::new();
+
+        let snap = two_panes(PA, None);
+        coord.on_notification(SA, payload("done"), true); // SA is the focused, visible surface
+        let out = coord.drain(&snap, true);
+
+        assert!(!coord.is_surface_unread(SA)); // recorded as read
+        assert_eq!(coord.store().items().len(), 1);
+        assert!(coord.store().items()[0].is_read);
+        assert_eq!(out.surfaced.len(), 1);
+        assert!(!out.surfaced[0].show_toast); // suppressed
+    }
+
+    #[test] // Covers R4 boundary.
+    fn notification_while_app_backgrounded_requests_toast_even_on_focused_surface() {
+        let mut coord = NotificationCoordinator::new();
+
+        let snap = two_panes(PA, None);
+        coord.on_notification(SA, payload("done"), true);
+        let out = coord.drain(&snap, false); // app not foreground
+
+        assert!(out.surfaced[0].show_toast);
+        assert!(coord.is_surface_unread(SA));
+    }
+
+    #[test] // Covers AE4.
+    fn rapid_repeats_for_one_surface_coalesce_to_one() {
+        let mut coord = NotificationCoordinator::new();
+
+        let snap = two_panes(PA, None);
+        coord.on_notification(SB, payload("a"), true);
+        coord.on_notification(SB, payload("b"), true);
+        coord.on_notification(SB, payload("c"), true);
+        let out = coord.drain(&snap, true);
+
+        assert_eq!(out.surfaced.len(), 1);
+        assert_eq!(out.surfaced[0].notification.title, "c");
+        assert_eq!(coord.store().items().len(), 1);
+    }
+
+    #[test] // Covers AE5.
+    fn notification_for_removed_surface_is_dropped_before_delivery() {
+        let mut coord = NotificationCoordinator::new();
+
+        coord.on_notification(SB, payload("orphan"), true);
+        // SB's tab closed before the drain: a snapshot with only pane A / surface A.
+        let only_a = PaneLeaf {
+            id: PA,
+            tabs: vec![SA],
+            selected: SA,
+        };
+        let snap = TreeSnapshot {
+            root: Some(Arc::new(SplitNode::Leaf(only_a))),
+            focused_pane: PA,
+            zoomed_pane: None,
+            version: 2,
+        };
+        let out = coord.drain(&snap, true);
+
+        assert!(out.surfaced.is_empty());
+        assert!(coord.store().items().is_empty());
+        assert!(!out.more_pending);
+    }
+
+    #[test] // Covers R6, AE6.
+    fn focus_change_marks_focused_surface_read_and_clears_its_flash() {
+        let mut coord = NotificationCoordinator::new();
+
+        // Notification on unfocused SB while A is focused -> unread.
+        coord.on_notification(SB, payload("done"), true);
+        coord.drain(&two_panes(PA, None), true);
+        assert!(coord.is_surface_unread(SB));
+
+        // Now focus pane B (its selected surface is SB).
+        let flash_cleared = coord.on_focus_changed(&two_panes(PB, None));
+
+        assert!(!coord.is_surface_unread(SB));
+        assert_eq!(flash_cleared, Some(PB));
+    }
+
+    #[test] // Record == false: nothing stored, but flash/toast still surface.
+    fn record_off_policy_surfaces_effects_without_recording() {
+        let policy = NotificationPolicy::with_overrides(|_| NotificationEffects {
+            record: false,
+            ..NotificationEffects::default()
+        });
+        let mut coord = NotificationCoordinator::with_policy(policy);
+
+        coord.on_notification(SB, payload("ephemeral"), true);
+        let out = coord.drain(&two_panes(PA, None), true);
+
+        assert!(coord.store().items().is_empty()); // not recorded
+        assert_eq!(out.surfaced.len(), 1); // but still surfaced
+        assert!(out.surfaced[0].show_toast);
+        assert!(out.surfaced[0].flash);
+    }
+
+    #[test] // A notification for a surface hidden behind a zoom on another pane is not "visible".
+    fn surface_hidden_by_zoom_on_another_pane_is_not_suppressed() {
+        let mut coord = NotificationCoordinator::new();
+
+        // Pane A focused but pane B is zoomed full-screen, hiding A.
+        let snap = two_panes(PA, Some(PB));
+        coord.on_notification(SA, payload("done"), true);
+        let out = coord.drain(&snap, true);
+
+        assert!(out.surfaced[0].show_toast); // A not visible -> not suppressed
+        assert!(coord.is_surface_unread(SA));
+    }
+}
