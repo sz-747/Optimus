@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["engine", "shell"]
+
+# Workspace root owns profiles (member-level [profile.*] is ignored by cargo).
+[profile.release]
+opt-level = 3
+lto = "thin"

@@ -29,3 +29,6 @@ Cargo.lock.orig
 *.log
 Thumbs.db
 .DS_Store
+node_modules
+ui/dist
+target

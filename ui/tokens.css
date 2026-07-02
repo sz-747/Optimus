@@ -1,0 +1,65 @@
+/* Graphite design tokens (DESIGN.md) as CSS custom properties — canonical copy.
+   Chrome CSS must use these tokens; raw hex in view styles is banned (stylelint gate,
+   replaces TokensGuardTests.cs). */
+:root {
+  /* Surfaces — value-step elevation, no blur */
+  --surface-0: #0C0C0C;
+  --surface-1: #121212;
+  --surface-2: #161616;
+  --surface-selected: #2D2D2D;
+  --hairline: #2B2B2B;
+
+  /* Text */
+  --text-primary: #E6E6E6;
+  --text-muted: #8A8A8A;
+  --text-on-accent: #FFFFFF;
+
+  /* Semantic state */
+  --git-branch: #7FB36E;
+  --git-dirty: #D9A04E;
+  --pr-open: #4D9CF0;
+  --pr-merged: #A87FE0;
+  --pr-closed: #D96A6A;
+
+  /* Attention */
+  --attention: #2DD4BF;   /* live / focus */
+  --unread: #D86FB0;      /* unread */
+
+  /* Capacity escalation */
+  --capacity-calm: #8A8A8A;
+  --capacity-warn: #D9A04E;
+  --capacity-cap:  #D96A6A;
+
+  /* Workspace identity hues (hash workspace-id -> index) */
+  --id-0: #5BA3C4; --id-1: #2DD4BF; --id-2: #6FC28C; --id-3: #C49A5B;
+  --id-4: #B07FD9; --id-5: #D97FA8; --id-6: #7F92D9; --id-7: #9FC25B;
+
+  /* Type */
+  --ui: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  --fs-caption: 10px;
+  --fs-meta: 11px;
+  --fs-body: 12px;
+  --fs-title: 13px;
+
+  /* Spacing (base 4) */
+  --2xs: 2px; --xs: 4px; --sm: 8px; --md: 12px; --lg: 16px; --xl: 24px;
+
+  /* Motion budget */
+  --t-micro: 80ms;
+  --t-short: 200ms;
+  --t-medium: 300ms;
+  --ease-out: cubic-bezier(.2,.7,.3,1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--ui);
+  font-size: var(--fs-body);
+  overflow: hidden;
+}
+
