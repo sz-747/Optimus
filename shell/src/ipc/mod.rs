@@ -4,4 +4,5 @@
 
 pub mod access;
 pub mod naming;
+pub mod password;
 pub mod wire;
