@@ -10,6 +10,7 @@
 #![warn(clippy::unwrap_used)]
 
 pub mod engine;
+mod job;
 pub mod pty;
 pub mod vt;
 

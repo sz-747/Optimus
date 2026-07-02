@@ -19,6 +19,7 @@ use windows::Win32::System::Threading::{
     GetCurrentProcess, GetExitCodeProcess, WaitForSingleObject, INFINITE,
 };
 
+use crate::job::JobObject;
 use crate::pty::{default_shell, ConPty};
 use crate::vt::Osc99Sniffer;
 
@@ -29,6 +30,11 @@ pub struct EngineOptions {
     pub initial_cols: u16,
     /// Initial grid height in rows. 0 → default (24).
     pub initial_rows: u16,
+    /// Per-process hard memory cap for the ConPTY child's Job Object, in bytes (plan §3.3 /
+    /// U4; typically 2× the capacity model's per-terminal budget). 0 → no cap (the job still
+    /// carries `KILL_ON_JOB_CLOSE`, just unbounded memory). The child always gets a job when
+    /// creation succeeds; this only sets `JOB_OBJECT_LIMIT_PROCESS_MEMORY`.
+    pub job_memory_limit_bytes: usize,
 }
 
 impl Default for EngineOptions {
@@ -36,6 +42,7 @@ impl Default for EngineOptions {
         Self {
             initial_cols: 80,
             initial_rows: 24,
+            job_memory_limit_bytes: 0,
         }
     }
 }
@@ -55,6 +62,7 @@ impl EngineOptions {
             } else {
                 self.initial_rows
             },
+            job_memory_limit_bytes: self.job_memory_limit_bytes,
         }
     }
 }
@@ -255,6 +263,12 @@ struct WorkerState {
 
     reader: Option<JoinHandle<()>>,
     pty: Option<ConPty>,
+    /// The ConPTY child's Job Object (tier-2 memory backstop / KILL_ON_JOB_CLOSE reap). `None`
+    /// before spawn or when job creation failed (best-effort). Dropped in `teardown` **after**
+    /// `pty.shutdown()`, so a cleanly-exiting shell is never job-killed first.
+    job: Option<JobObject>,
+    /// Per-process job memory cap in bytes (from [`EngineOptions`]); 0 = uncapped.
+    job_memory_limit_bytes: usize,
     /// Ensures `ChildExit` is emitted exactly once per spawn — the waiter thread
     /// (`ChildExited`) and PTY-reader EOF (`PtyEof`) can both observe the same exit.
     exit_emitted: bool,
@@ -293,6 +307,8 @@ fn worker_loop(
         child_process_handle,
         reader: None,
         pty: None,
+        job: None,
+        job_memory_limit_bytes: options.job_memory_limit_bytes,
         exit_emitted: false,
         cols: options.initial_cols,
         rows: options.initial_rows,
@@ -424,6 +440,12 @@ impl WorkerState {
         // `spawn_shell` returns Ok.
         self.publish_child(&pty);
 
+        // Enroll the child in a Job Object (plan §3.3): KILL_ON_JOB_CLOSE ties every shell's
+        // lifetime to this process, plus an optional hard per-process memory cap. Best-effort —
+        // `create_for` returns None on failure and the terminal simply runs unbackstopped.
+        // Uses the ConPTY's own handle (valid now); the assignment outlives it.
+        self.job = JobObject::create_for(pty.child_process_handle(), self.job_memory_limit_bytes);
+
         // PTY reader thread: blocking reads → bytes forwarded to this worker thread.
         let mut reader = pty.output_reader();
         let tx = self.self_tx.clone();
@@ -516,6 +538,9 @@ impl WorkerState {
             let _ = reader.join();
         }
         self.pty = None;
+        // Dispose the job last: ClosePseudoConsole above already gave the shell a clean exit,
+        // so closing the job here (KILL_ON_JOB_CLOSE) only reaps stragglers — never job-first.
+        self.job = None;
     }
 
     /// Publish the freshly spawned child's PID and an **engine-owned duplicate** of its
