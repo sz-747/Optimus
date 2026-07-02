@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V6 · Terminal-line — Optimus palette</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* V6 Terminal-line: looks like a shell prompt with a tmux-style status line. Everything
+     monospace, results as a typed-out list, capacity in the bottom status bar. Bet =
+     maximal Graphite cohesion + power-user muscle memory. */
+  .tl { width: 620px; background: var(--surface-0); border: 1px solid var(--hairline);
+        border-radius: 3px; box-shadow: 0 16px 48px rgba(0,0,0,.6); overflow: hidden;
+        font-family: var(--mono); }
+  .tl-prompt { display: flex; align-items: center; gap: 0; padding: var(--md) var(--lg);
+        font-size: var(--fs-title); border-bottom: 1px solid var(--hairline); }
+  .tl-ps1 { color: var(--attention); white-space: pre; }
+  .tl-prompt input { flex: 1; background: transparent; border: 0; outline: 0;
+        color: var(--text-primary); font-family: var(--mono); font-size: var(--fs-title); caret-color: var(--attention); }
+  .tl-list { padding: var(--sm) 0; max-height: 300px; overflow-y: auto; }
+  .tl-row { display: grid; grid-template-columns: 16px 130px 1fr auto; gap: var(--sm);
+        align-items: center; padding: 3px var(--lg); font-size: var(--fs-meta); }
+  .tl-row[aria-selected="true"] { background: var(--surface-2); }
+  .tl-row[aria-selected="true"] .car { color: var(--attention); }
+  .tl-row .car { color: transparent; }
+  .tl-row .nm { color: var(--text-primary); }
+  .tl-row .br { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tl-row .rt { color: var(--text-muted); text-align: right; }
+  .tl-status { display: flex; align-items: stretch; font-size: var(--fs-meta);
+        border-top: 1px solid var(--hairline); }
+  .tl-seg { padding: 4px var(--md); display: flex; align-items: center; gap: 6px; }
+  .tl-seg.mode { background: var(--attention); color: var(--surface-0); font-weight: 600; }
+  .tl-seg.cap { color: var(--surface-0); font-weight: 600; }
+  .tl-seg.spacer { flex: 1; color: var(--text-muted); }
+  .tl-seg.keys { color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="overlay">
+  <div class="tl" role="dialog" aria-label="Terminal-line palette">
+    <div class="tl-prompt">
+      <span class="tl-ps1" id="ps1">optimus ❯ </span>
+      <input id="q" placeholder="workspace or :command" autofocus autocomplete="off">
+    </div>
+    <div class="tl-list" id="list" role="listbox"></div>
+    <div class="tl-status">
+      <span class="tl-seg mode" id="mode">SWITCH</span>
+      <span class="tl-seg cap" id="cap"></span>
+      <span class="tl-seg spacer" id="count"></span>
+      <span class="tl-seg keys">↑↓ ⏎ &nbsp;:&nbsp;cmd &nbsp;esc</span>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const O = window.OPTIMUS, c = O.capacity, col = O.capColor(c.live);
+  const capSeg = document.getElementById("cap");
+  capSeg.style.background = col; capSeg.textContent = `${c.live}/${c.max} SAFE-ZONE`;
+  let sel = 0, rows = [];
+  function render(q) {
+    const cmd = q.startsWith(":");
+    document.getElementById("mode").textContent = cmd ? "COMMAND" : "SWITCH";
+    document.getElementById("ps1").textContent = cmd ? "optimus : " : "optimus ❯ ";
+    const src = cmd
+      ? O.commands.map(c2=>({nm:c2.label, br:c2.group, rt:c2.hint, mark:c2.cost?"+":c2.frees?"−":" ", warn:c2.cost, ok:c2.frees}))
+      : O.workspaces.map(w=>({nm:w.name, br:`${w.branch}${w.pr?" "+w.pr:""}`, rt:`${w.live}/${c.max} ${w.ram}`, mark:w.live?"●":"○", hue:w.live?w.hue:null}));
+    const term = cmd ? q.slice(1).trim() : q.trim();
+    rows = src.map(r=>({r,s:O.fuzzy(term,r.nm)})).filter(x=>x.s>=0).sort((a,b)=>a.s-b.s).map(x=>x.r);
+    sel = Math.min(sel, Math.max(0,rows.length-1));
+    document.getElementById("list").innerHTML = rows.map((r,i)=>`
+      <div class="tl-row" role="option" aria-selected="${i===sel}">
+        <span class="car">❯</span>
+        <span class="nm" style="${r.hue?`color:var(${r.hue})`:""}">${r.mark} ${r.nm}</span>
+        <span class="br">${r.br}</span>
+        <span class="rt" style="${r.warn?"color:var(--capacity-warn)":r.ok?"color:var(--git-branch)":""}">${r.rt}</span>
+      </div>`).join("");
+    document.getElementById("count").textContent = rows.length + (cmd?" commands":" workspaces");
+  }
+  const q = document.getElementById("q");
+  q.addEventListener("input", e=>{ sel=0; render(e.target.value); });
+  q.addEventListener("keydown", e=>{
+    if(e.key==="ArrowDown"){sel=Math.min(sel+1,rows.length-1);render(q.value);e.preventDefault();}
+    if(e.key==="ArrowUp"){sel=Math.max(sel-1,0);render(q.value);e.preventDefault();}
+  });
+  window.addEventListener("DOMContentLoaded", ()=>render(""));
+</script>
+</body>
+</html>

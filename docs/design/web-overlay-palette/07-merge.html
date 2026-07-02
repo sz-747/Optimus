@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V7 · Merge (Spotlight + capacity steal + status line) — Optimus palette</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* V7 MERGE — base: V1 Spotlight (Borda winner, strongest C1 + selection state).
+     Steal A (from V4, cited Support lead + Competitor PM): slim 8-slot meter + per-row
+       +1/-1 slot cost tags -> capacity is glanceable and slot cost is unmissable.
+     Steal B (from V6, cited eng lead + a11y): persistent status line carrying MODE +
+       CAPACITY in Cascadia Mono so neither ever disappears (fixes V1's tiny capacity pill).
+     Fix (eng lead): Enter is actually wired to a commit handler. */
+  .mg { width: 580px; background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 4px; box-shadow: 0 16px 48px rgba(0,0,0,.6); overflow: hidden; }
+
+  .mg-input { display: flex; align-items: center; gap: var(--sm);
+        padding: var(--md) var(--lg) var(--sm); }
+  .mg-mode { font-size: var(--fs-caption); color: var(--attention); text-transform: uppercase;
+        letter-spacing: .06em; border: 1px solid var(--attention); border-radius: 2px;
+        padding: 1px 6px; }
+  .mg-input input { flex: 1; background: transparent; border: 0; outline: 0;
+        color: var(--text-primary); font-family: var(--ui); font-size: var(--fs-title); }
+  .mg-input input::placeholder { color: var(--text-muted); }
+
+  /* Steal A — slim 8-slot meter, the V4 idea compressed to one quiet strip. */
+  .mg-meter { display: flex; gap: 4px; align-items: center; padding: 0 var(--lg) var(--md); }
+  .mg-pip { flex: 1; height: 4px; border-radius: 1px; background: var(--surface-0);
+        border: 1px solid var(--hairline); }
+  .mg-pip.full { border: 0; }
+  .mg-pip.next { border-style: dashed; border-color: var(--attention); }
+
+  .mg-list { max-height: 300px; overflow-y: auto; border-top: 1px solid var(--hairline); }
+  .mg-item { display: grid; grid-template-columns: 14px 1fr auto; gap: var(--sm);
+        align-items: center; padding: var(--sm) var(--lg); border-left: 2px solid transparent; }
+  .mg-item[aria-selected="true"] { background: var(--surface-selected); border-left-color: var(--attention); }
+  .mg-spine { width: 8px; height: 8px; border-radius: 2px; }
+  .mg-name { font-size: var(--fs-title); color: var(--text-primary); }
+  .mg-meta { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-muted); }
+  /* Steal A — per-row slot cost tag */
+  .mg-tag { font-family: var(--mono); font-size: var(--fs-caption); padding: 1px 6px; border-radius: 2px; }
+  .mg-tag.cost { background: rgba(217,160,78,.15); color: var(--capacity-warn); }
+  .mg-tag.free { background: rgba(127,179,110,.15); color: var(--git-branch); }
+
+  /* Steal B — persistent status line: mode + capacity always present, Cascadia Mono. */
+  .mg-status { display: flex; align-items: stretch; font-family: var(--mono);
+        font-size: var(--fs-meta); border-top: 1px solid var(--hairline); background: var(--surface-2); }
+  .mg-seg { padding: 5px var(--md); display: flex; align-items: center; gap: 6px; }
+  .mg-seg.smode { color: var(--attention); }
+  .mg-seg.scap { color: var(--surface-0); font-weight: 600; }     /* filled with capacity colour */
+  .mg-seg.scount { flex: 1; color: var(--text-muted); }
+  .mg-seg.skeys { color: var(--text-muted); }
+  .mg-seg.skeys .kbd { border-color: var(--hairline); }
+  .mg-toast { padding: 5px var(--md); color: var(--git-branch); }
+</style>
+</head>
+<body>
+<div class="overlay">
+  <div class="mg" role="dialog" aria-label="Command palette">
+    <div class="mg-input">
+      <span class="mg-mode" id="mode">Switch</span>
+      <input id="q" placeholder="Jump to a workspace…   type &gt; for commands" autofocus autocomplete="off">
+    </div>
+    <div class="mg-meter" id="meter" title="safe-zone slots"></div>
+    <div class="mg-list" id="list" role="listbox"></div>
+    <div class="mg-status">
+      <span class="mg-seg smode" id="smode">SWITCH</span>
+      <span class="mg-seg scap" id="scap"></span>
+      <span class="mg-seg scount" id="scount"></span>
+      <span class="mg-seg skeys"><span class="kbd">↑↓</span>&nbsp;<span class="kbd">⏎</span>&nbsp;<span class="kbd">esc</span></span>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const O = window.OPTIMUS, c = O.capacity, col = O.capColor(c.live);
+  // Steal A — slim meter
+  document.getElementById("meter").innerHTML = Array.from({length:c.max},(_,i)=>{
+    const full=i<c.live, next=i===c.live;
+    return `<span class="mg-pip ${full?"full":""} ${next?"next":""}" ${full?`style="background:${col}"`:""}></span>`;
+  }).join("");
+  // Steal B — status line capacity chip (filled with capacity colour)
+  const scap=document.getElementById("scap"); scap.style.background=col; scap.textContent=`${c.live}/${c.max} SAFE-ZONE`;
+
+  let sel = 0, rows = [];
+  function render(q) {
+    const cmd = q.startsWith(">");
+    document.getElementById("mode").textContent = cmd ? "Run" : "Switch";
+    document.getElementById("smode").textContent = cmd ? "COMMAND" : "SWITCH";
+    const src = cmd
+      ? O.commands.map(x=>({key:x.label, sub:x.group, hint:x.hint, cost:x.cost, frees:x.frees, hue:null}))
+      : O.workspaces.map(w=>({key:w.name, sub:`${w.branch}${w.pr?" · "+w.pr:""} · ${w.ram}`, hint:`${w.live}/${c.max}`, hue:w.live?w.hue:null}));
+    const term = cmd ? q.slice(1).trim() : q.trim();
+    rows = src.map(r=>({r,s:O.fuzzy(term,r.key)})).filter(x=>x.s>=0).sort((a,b)=>a.s-b.s).map(x=>x.r);
+    sel = Math.min(sel, Math.max(0,rows.length-1));
+    document.getElementById("list").innerHTML = rows.map((r,i)=>{
+      const tag = r.cost ? `<span class="mg-tag cost">+1 slot</span>`
+                : r.frees ? `<span class="mg-tag free">−1 slot</span>`
+                : `<span class="mg-meta">${r.hint}</span>`;
+      return `<div class="mg-item" role="option" aria-selected="${i===sel}">
+        <span class="mg-spine" style="background:${r.hue?`var(${r.hue})`:"transparent"}"></span>
+        <div><div class="mg-name">${r.key}</div><div class="mg-meta">${r.sub}</div></div>
+        ${tag}
+      </div>`;
+    }).join("");
+    document.getElementById("scount").textContent = rows.length + (cmd?" commands":" workspaces");
+  }
+  function commit() {
+    const r = rows[sel]; if (!r) return;
+    const sc = document.getElementById("scount");
+    sc.innerHTML = `<span class="mg-toast">▸ ${document.getElementById("mode").textContent === "Run" ? "run" : "switch to"} ${r.key}</span>`;
+    // In the app this posts {action, target} over the WebView2 bridge (WebMessageReceived) and closes.
+  }
+  const q = document.getElementById("q");
+  q.addEventListener("input", e=>{ sel=0; render(e.target.value); });
+  q.addEventListener("keydown", e=>{
+    if(e.key==="ArrowDown"){sel=Math.min(sel+1,rows.length-1);render(q.value);e.preventDefault();}
+    else if(e.key==="ArrowUp"){sel=Math.max(sel-1,0);render(q.value);e.preventDefault();}
+    else if(e.key==="Enter"){ commit(); e.preventDefault(); }      // fix: Enter wired
+    else if(e.key==="Escape"){ q.value=""; sel=0; render(""); e.preventDefault(); }
+  });
+  window.addEventListener("DOMContentLoaded", ()=>render(""));
+</script>
+</body>
+</html>

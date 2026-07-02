@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V1 · Spotlight — Optimus palette</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* V1 Spotlight: one centered input, a single ranked column, capacity pill inline.
+     Bet = pure speed, minimal disclosure. */
+  .sp { width: 560px; background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 4px; box-shadow: 0 16px 48px rgba(0,0,0,.6); overflow: hidden; }
+  .sp-input { display: flex; align-items: center; gap: var(--sm);
+        padding: var(--md) var(--lg); border-bottom: 1px solid var(--hairline); }
+  .sp-mode { font-size: var(--fs-caption); color: var(--attention); text-transform: uppercase;
+        letter-spacing: .06em; border: 1px solid var(--attention); border-radius: 2px;
+        padding: 1px 6px; opacity: .9; }
+  .sp-input input { flex: 1; background: transparent; border: 0; outline: 0;
+        color: var(--text-primary); font-family: var(--ui); font-size: var(--fs-title); }
+  .sp-input input::placeholder { color: var(--text-muted); }
+  .sp-list { max-height: 320px; overflow-y: auto; }
+  .sp-item { display: grid; grid-template-columns: 14px 1fr auto; gap: var(--sm);
+        align-items: center; padding: var(--sm) var(--lg); border-left: 2px solid transparent; }
+  .sp-item[aria-selected="true"] { background: var(--surface-selected);
+        border-left-color: var(--attention); }
+  .sp-spine { width: 8px; height: 8px; border-radius: 2px; }
+  .sp-name { font-size: var(--fs-title); color: var(--text-primary); }
+  .sp-meta { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-muted); }
+  .sp-foot { display: flex; justify-content: space-between; align-items: center;
+        padding: var(--sm) var(--lg); border-top: 1px solid var(--hairline); background: var(--surface-2); }
+</style>
+</head>
+<body>
+<div class="overlay">
+  <div class="sp" role="dialog" aria-label="Command palette">
+    <div class="sp-input">
+      <span class="sp-mode">Switch</span>
+      <input id="q" placeholder="Jump to a workspace…  (type a command with &gt;)" autofocus>
+      <span class="cap-pill"><span class="cap-dot" id="capdot"></span><span id="capnum"></span></span>
+    </div>
+    <div class="sp-list" id="list" role="listbox"></div>
+    <div class="sp-foot">
+      <div class="hintbar">
+        <span><span class="kbd">↑↓</span> move</span>
+        <span><span class="kbd">⏎</span> open</span>
+        <span><span class="kbd">&gt;</span> commands</span>
+        <span><span class="kbd">esc</span> close</span>
+      </div>
+      <span class="sp-meta" id="footnote"></span>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const O = window.OPTIMUS, list = document.getElementById("q") && document.getElementById("list");
+  let sel = 0, rows = [];
+  function capInit() {
+    document.getElementById("capdot").style.background = O.capColor(O.capacity.live);
+    document.getElementById("capnum").textContent = O.capacity.live + "/" + O.capacity.max + " safe-zone";
+    document.getElementById("capnum").style.color = O.capColor(O.capacity.live);
+  }
+  function render(q) {
+    const cmd = q.startsWith(">");
+    document.querySelector(".sp-mode").textContent = cmd ? "Run" : "Switch";
+    const src = cmd
+      ? O.commands.map(c => ({ key: c.label, sub: c.group + (c.cost ? " · uses 1 slot" : c.frees ? " · frees a slot" : ""), hint: c.hint, cost: c.cost, frees: c.frees, hue: null }))
+      : O.workspaces.map(w => ({ key: w.name, sub: `${w.branch}${w.pr ? " · " + w.pr : ""} · ${w.live}/${O.capacity.max} · ${w.ram}`, hint: w.title, hue: w.live ? w.hue : null }));
+    const term = cmd ? q.slice(1).trim() : q.trim();
+    rows = src.map(r => ({ r, s: O.fuzzy(term, r.key) })).filter(x => x.s >= 0)
+              .sort((a, b) => a.s - b.s).map(x => x.r);
+    sel = Math.min(sel, Math.max(0, rows.length - 1));
+    const el = document.getElementById("list");
+    el.innerHTML = rows.map((r, i) => `
+      <div class="sp-item" role="option" aria-selected="${i === sel}">
+        <span class="sp-spine" style="background:${r.hue ? `var(${r.hue})` : "transparent"}"></span>
+        <div><div class="sp-name">${r.key}</div><div class="sp-meta">${r.sub}</div></div>
+        <span class="sp-meta" style="color:${r.cost ? O.getCss("--capacity-warn") : r.frees ? O.getCss("--git-branch") : ""}">${r.hint}</span>
+      </div>`).join("");
+    document.getElementById("footnote").textContent = rows.length + (cmd ? " commands" : " workspaces");
+  }
+  document.getElementById("q").addEventListener("input", e => { sel = 0; render(e.target.value); });
+  document.getElementById("q").addEventListener("keydown", e => {
+    if (e.key === "ArrowDown") { sel = Math.min(sel + 1, rows.length - 1); render(document.getElementById("q").value); e.preventDefault(); }
+    if (e.key === "ArrowUp")   { sel = Math.max(sel - 1, 0); render(document.getElementById("q").value); e.preventDefault(); }
+  });
+  window.addEventListener("DOMContentLoaded", () => { capInit(); render(""); });
+</script>
+</body>
+</html>

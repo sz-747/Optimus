@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V3 · Launcher grid — Optimus palette</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* V3 Launcher grid: workspaces as a filterable tile grid, each tile a mini capacity bar
+     + identity hue. Bet = spatial memory ("tokyo is top-left") beats list-scanning. */
+  .lg { width: 720px; background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 4px; box-shadow: 0 16px 48px rgba(0,0,0,.6); overflow: hidden; }
+  .lg-top { display: flex; align-items: center; gap: var(--sm); padding: var(--md) var(--lg);
+        border-bottom: 1px solid var(--hairline); }
+  .lg-top input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text-primary); font-size: var(--fs-title); }
+  .lg-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--md); padding: var(--lg); }
+  .tile { background: var(--surface-0); border: 1px solid var(--hairline); border-radius: 3px;
+        padding: var(--md); display: flex; flex-direction: column; gap: var(--sm); min-height: 104px;
+        border-top: 3px solid var(--hairline); transition: border-color var(--t-micro) var(--ease-out); }
+  .tile[aria-selected="true"] { background: var(--surface-selected); }
+  .tile .name { font-size: var(--fs-title); }
+  .tile .br { font-family: var(--mono); font-size: var(--fs-caption); color: var(--text-muted);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .slots { display: flex; gap: 3px; margin-top: auto; }
+  .slot { flex: 1; height: 5px; border-radius: 1px; background: var(--hairline); }
+  .tile .ram { font-family: var(--mono); font-size: var(--fs-caption); color: var(--text-muted); }
+  .lg-foot { display: flex; justify-content: space-between; align-items: center;
+        padding: var(--sm) var(--lg); border-top: 1px solid var(--hairline); background: var(--surface-2); }
+  .lg-new { border: 1px dashed var(--hairline); align-items: center; justify-content: center;
+        color: var(--text-muted); font-size: var(--fs-meta); }
+</style>
+</head>
+<body>
+<div class="overlay" style="place-items:start center;">
+  <div class="lg" role="dialog" aria-label="Workspace launcher">
+    <div class="lg-top">
+      <span class="kbd">⌕</span>
+      <input id="q" placeholder="Filter or jump…  (←→↑↓ to move)" autofocus>
+      <span class="cap-pill"><span class="cap-dot" id="cd"></span><span id="cn"></span></span>
+    </div>
+    <div class="lg-grid" id="grid"></div>
+    <div class="lg-foot">
+      <div class="hintbar">
+        <span><span class="kbd">←→↑↓</span> move</span>
+        <span><span class="kbd">⏎</span> open</span>
+        <span><span class="kbd">N</span> new (uses 1 slot)</span>
+      </div>
+      <span class="cap-pill" id="cf"></span>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const O = window.OPTIMUS; let sel = 0, rows = [];
+  const cap = O.capColor(O.capacity.live);
+  document.getElementById("cd").style.background = cap;
+  document.getElementById("cn").textContent = O.capacity.live+"/"+O.capacity.max;
+  document.getElementById("cn").style.color = cap;
+  document.getElementById("cf").innerHTML = `<span class="cap-dot" style="background:${cap}"></span><span style="color:${cap}">${O.capacity.live} of ${O.capacity.max} safe-zone slots used · ${O.capacity.max-O.capacity.live} free</span>`;
+  function render(q) {
+    rows = O.workspaces.map(w=>({w,s:O.fuzzy(q.trim(),w.name)})).filter(x=>x.s>=0).sort((a,b)=>a.s-b.s).map(x=>x.w);
+    sel = Math.min(sel, Math.max(0, rows.length-1));
+    const g = document.getElementById("grid");
+    g.innerHTML = rows.map((w,i)=>{
+      const slots = Array.from({length:O.capacity.max},(_,k)=>
+        `<span class="slot" style="background:${k<w.live?`var(${w.hue})`:"var(--hairline)"}"></span>`).join("");
+      return `<div class="tile" role="option" aria-selected="${i===sel}" style="border-top-color:${w.live?`var(${w.hue})`:"var(--hairline)"}">
+        <div class="name">${w.name}</div>
+        <div class="br">${w.branch}${w.pr?" · "+w.pr:""}</div>
+        <div class="ram">${w.live} live · ${w.ram}</div>
+        <div class="slots">${slots}</div>
+      </div>`;
+    }).join("") + `<div class="tile lg-new">+ New workspace<br><span class="kbd">N</span></div>`;
+  }
+  const q = document.getElementById("q");
+  q.addEventListener("input", e=>{ sel=0; render(e.target.value); });
+  q.addEventListener("keydown", e=>{
+    const cols=3;
+    if(e.key==="ArrowRight"){sel=Math.min(sel+1,rows.length-1);render(q.value);e.preventDefault();}
+    if(e.key==="ArrowLeft"){sel=Math.max(sel-1,0);render(q.value);e.preventDefault();}
+    if(e.key==="ArrowDown"){sel=Math.min(sel+cols,rows.length-1);render(q.value);e.preventDefault();}
+    if(e.key==="ArrowUp"){sel=Math.max(sel-cols,0);render(q.value);e.preventDefault();}
+  });
+  window.addEventListener("DOMContentLoaded", ()=>render(""));
+</script>
+</body>
+</html>

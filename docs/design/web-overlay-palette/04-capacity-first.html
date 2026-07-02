@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V4 · Capacity-first — Optimus palette</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* V4 Capacity-first: the safe-zone slot meter IS the frame. 8 slots across the top,
+     filled/empty; results below are framed as "what fits". Bet = the differentiator
+     leads every interaction (criterion C2 maximised). */
+  .cf { width: 600px; background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 4px; box-shadow: 0 16px 48px rgba(0,0,0,.6); overflow: hidden; }
+  .cf-meter { padding: var(--lg) var(--lg) var(--md); background: var(--surface-2);
+        border-bottom: 1px solid var(--hairline); }
+  .cf-meter .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--sm); }
+  .cf-meter .big { font-family: var(--mono); font-size: 22px; font-weight: 600; }
+  .cf-meter .sub { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-muted); }
+  .cf-slots { display: flex; gap: 5px; }
+  .cf-slot { flex: 1; height: 22px; border-radius: 2px; background: var(--surface-0);
+        border: 1px solid var(--hairline); position: relative; }
+  .cf-slot.full::after { content:""; position:absolute; inset:2px; border-radius:1px; }
+  .cf-slot.next { border-color: var(--attention); border-style: dashed; }
+  .cf-search { display: flex; align-items: center; gap: var(--sm); padding: var(--md) var(--lg);
+        border-bottom: 1px solid var(--hairline); }
+  .cf-search input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text-primary); font-size: var(--fs-title); }
+  .cf-list { max-height: 240px; overflow-y: auto; }
+  .cf-item { display: grid; grid-template-columns: 1fr auto auto; gap: var(--md); align-items: center;
+        padding: var(--sm) var(--lg); border-left: 2px solid transparent; }
+  .cf-item[aria-selected="true"] { background: var(--surface-selected); border-left-color: var(--attention); }
+  .cf-item .nm { font-size: var(--fs-title); }
+  .cf-item .mt { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-muted); }
+  .cf-item .tag { font-family: var(--mono); font-size: var(--fs-caption); padding: 1px 6px; border-radius: 2px; }
+  .cf-foot { padding: var(--sm) var(--lg); border-top: 1px solid var(--hairline); background: var(--surface-2); }
+</style>
+</head>
+<body>
+<div class="overlay">
+  <div class="cf" role="dialog" aria-label="Capacity-first palette">
+    <div class="cf-meter">
+      <div class="head">
+        <span class="big" id="big"></span>
+        <span class="sub" id="sub"></span>
+      </div>
+      <div class="cf-slots" id="slots"></div>
+    </div>
+    <div class="cf-search">
+      <span class="kbd">⌕</span>
+      <input id="q" placeholder="Switch, or run a command…" autofocus>
+    </div>
+    <div class="cf-list" id="list" role="listbox"></div>
+    <div class="cf-foot hintbar">
+      <span><span class="kbd">↑↓</span> move</span>
+      <span><span class="kbd">⏎</span> open</span>
+      <span style="color:var(--capacity-warn)">amber tag = consumes a slot</span>
+      <span style="color:var(--git-branch)">green = frees one</span>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const O = window.OPTIMUS, c = O.capacity, col = O.capColor(c.live);
+  document.getElementById("big").textContent = c.live + " / " + c.max;
+  document.getElementById("big").style.color = col;
+  document.getElementById("sub").textContent = (c.max - c.live) + " terminals free · safe zone";
+  document.getElementById("slots").innerHTML = Array.from({length:c.max},(_,i)=>{
+    const full = i < c.live, next = i === c.live;
+    return `<div class="cf-slot ${full?"full":""} ${next?"next":""}"></div>`;
+  }).join("");
+  // Paint filled slots with the capacity colour (::after can't be set inline, so use a child span).
+  document.querySelectorAll(".cf-slot.full").forEach(s=>{
+    s.style.borderColor = col;
+    const f = document.createElement("span");
+    f.style.cssText = `position:absolute;inset:2px;border-radius:1px;background:${col}`;
+    s.appendChild(f);
+  });
+  let sel = 0, rows = [];
+  function render(q) {
+    const cmd = q.startsWith(">");
+    const src = cmd
+      ? O.commands.map(c2=>({key:c2.label, sub:c2.group, hint:c2.hint, cost:c2.cost, frees:c2.frees}))
+      : O.workspaces.map(w=>({key:w.name, sub:`${w.branch} · ${w.ram}`, hint:`${w.live}/${c.max}`, cost:false, frees:false}));
+    const term = cmd ? q.slice(1).trim() : q.trim();
+    rows = src.map(r=>({r,s:O.fuzzy(term,r.key)})).filter(x=>x.s>=0).sort((a,b)=>a.s-b.s).map(x=>x.r);
+    sel = Math.min(sel, Math.max(0,rows.length-1));
+    document.getElementById("list").innerHTML = rows.map((r,i)=>`
+      <div class="cf-item" role="option" aria-selected="${i===sel}">
+        <span class="nm">${r.key}</span>
+        <span class="mt">${r.sub}</span>
+        <span class="tag" style="${r.cost?`background:rgba(217,160,78,.15);color:var(--capacity-warn)`:r.frees?`background:rgba(127,179,110,.15);color:var(--git-branch)`:`color:var(--text-muted)`}">${r.cost?"+1 slot":r.frees?"−1 slot":r.hint}</span>
+      </div>`).join("");
+  }
+  const q = document.getElementById("q");
+  q.addEventListener("input", e=>{ sel=0; render(e.target.value); });
+  q.addEventListener("keydown", e=>{
+    if(e.key==="ArrowDown"){sel=Math.min(sel+1,rows.length-1);render(q.value);e.preventDefault();}
+    if(e.key==="ArrowUp"){sel=Math.max(sel-1,0);render(q.value);e.preventDefault();}
+  });
+  window.addEventListener("DOMContentLoaded", ()=>render(""));
+</script>
+</body>
+</html>

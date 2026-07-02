@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V5 · Drill-down stack — Optimus palette</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* V5 Drill-down stack: open to action categories, pick one -> filtered sublist with a
+     breadcrumb. Bet = the current mode is ALWAYS explicit (criterion C4 maximised);
+     wizard/commit posture. */
+  .dd { width: 540px; background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 4px; box-shadow: 0 16px 48px rgba(0,0,0,.6); overflow: hidden; }
+  .dd-crumb { display: flex; align-items: center; gap: var(--sm); padding: var(--sm) var(--lg);
+        background: var(--surface-2); border-bottom: 1px solid var(--hairline);
+        font-family: var(--mono); font-size: var(--fs-meta); }
+  .dd-crumb .seg { color: var(--text-muted); }
+  .dd-crumb .seg.cur { color: var(--attention); }
+  .dd-crumb .sep { color: var(--hairline); }
+  .dd-crumb .cap { margin-left: auto; }
+  .dd-search { display: flex; align-items: center; gap: var(--sm); padding: var(--md) var(--lg);
+        border-bottom: 1px solid var(--hairline); }
+  .dd-search input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text-primary); font-size: var(--fs-title); }
+  .dd-list { max-height: 300px; overflow-y: auto; }
+  .dd-item { display: grid; grid-template-columns: 22px 1fr auto; gap: var(--sm); align-items: center;
+        padding: var(--sm) var(--lg); border-left: 2px solid transparent; }
+  .dd-item[aria-selected="true"] { background: var(--surface-selected); border-left-color: var(--attention); }
+  .dd-item .ic { font-family: var(--mono); color: var(--text-muted); text-align: center; }
+  .dd-item .lb { font-size: var(--fs-title); }
+  .dd-item .sb { font-family: var(--mono); font-size: var(--fs-caption); color: var(--text-muted); }
+  .dd-item .rt { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-muted); }
+  .dd-foot { display: flex; justify-content: space-between; align-items: center;
+        padding: var(--sm) var(--lg); border-top: 1px solid var(--hairline); background: var(--surface-2); }
+</style>
+</head>
+<body>
+<div class="overlay">
+  <div class="dd" role="dialog" aria-label="Drill-down palette">
+    <div class="dd-crumb">
+      <span class="seg" id="c0">Optimus</span><span class="sep">/</span>
+      <span class="seg cur" id="c1">Home</span>
+      <span class="cap cap-pill" id="cap"></span>
+    </div>
+    <div class="dd-search"><span class="kbd" id="lvlkbd">⌕</span><input id="q" placeholder="Pick a category…  (Esc backs out)" autofocus></div>
+    <div class="dd-list" id="list" role="listbox"></div>
+    <div class="dd-foot hintbar">
+      <span><span class="kbd">↑↓</span> move</span>
+      <span><span class="kbd">⏎</span> select</span>
+      <span><span class="kbd">esc</span> back</span>
+      <span id="modehint" style="margin-left:auto;color:var(--text-muted)"></span>
+    </div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const O = window.OPTIMUS, c = O.capacity, col = O.capColor(c.live);
+  document.getElementById("cap").innerHTML = `<span class="cap-dot" style="background:${col}"></span><span style="color:${col}">${c.live}/${c.max}</span>`;
+  const categories = [
+    { id:"switch", ic:"⮕", lb:"Switch workspace", sb:"jump to a running or dehydrated workspace" },
+    { id:"create", ic:"+", lb:"Create",           sb:"new workspace / pane / web pane — uses a slot" },
+    { id:"capacity", ic:"▤", lb:"Capacity",        sb:"dashboard, dehydrate, free a slot" },
+    { id:"app",    ic:"⚙", lb:"Settings & app",   sb:"preferences, keymap, about" },
+  ];
+  let level = "home", sel = 0, rows = [];
+  function source() {
+    if (level === "home") return categories.map(c2=>({key:c2.lb, sb:c2.sb, ic:c2.ic, rt:"", go:c2.id}));
+    if (level === "switch") return O.workspaces.map(w=>({key:w.name, sb:`${w.branch}${w.pr?" · "+w.pr:""}`, ic:w.live?"●":"○", rt:`${w.live}/${c.max} · ${w.ram}`}));
+    return O.commands.filter(cmd =>
+        (level==="create"   && cmd.group==="Create") ||
+        (level==="capacity" && cmd.group==="Capacity") ||
+        (level==="app"      && (cmd.group==="App"||cmd.group==="Pane")))
+      .map(cmd=>({key:cmd.label, sb:cmd.group, ic:cmd.cost?"+":cmd.frees?"−":"·", rt:cmd.hint}));
+  }
+  const labelOf = { home:"Home", switch:"Switch workspace", create:"Create", capacity:"Capacity", app:"Settings & app" };
+  function render(q) {
+    document.getElementById("c1").textContent = labelOf[level];
+    const place = level==="home" ? "Pick a category…  (Esc backs out)"
+                 : level==="switch" ? "Filter workspaces…" : "Filter actions…";
+    document.getElementById("q").placeholder = place;
+    document.getElementById("modehint").textContent = level==="home" ? "" : "in " + labelOf[level];
+    rows = source().map(r=>({r,s:O.fuzzy(q.trim(),r.key)})).filter(x=>x.s>=0).sort((a,b)=>a.s-b.s).map(x=>x.r);
+    sel = Math.min(sel, Math.max(0,rows.length-1));
+    document.getElementById("list").innerHTML = rows.map((r,i)=>`
+      <div class="dd-item" role="option" aria-selected="${i===sel}">
+        <span class="ic">${r.ic}</span>
+        <div><div class="lb">${r.key}</div><div class="sb">${r.sb}</div></div>
+        <span class="rt">${r.rt||(r.go?"▸":"")}</span>
+      </div>`).join("");
+  }
+  const q = document.getElementById("q");
+  q.addEventListener("input", e=>{ sel=0; render(e.target.value); });
+  q.addEventListener("keydown", e=>{
+    if(e.key==="ArrowDown"){sel=Math.min(sel+1,rows.length-1);render(q.value);e.preventDefault();}
+    if(e.key==="ArrowUp"){sel=Math.max(sel-1,0);render(q.value);e.preventDefault();}
+    if(e.key==="Enter"){ const r=rows[sel]; if(r&&r.go){ level=r.go; sel=0; q.value=""; render(""); } e.preventDefault(); }
+    if(e.key==="Escape"){ if(level!=="home"){ level="home"; sel=0; q.value=""; render(""); e.preventDefault(); } }
+  });
+  window.addEventListener("DOMContentLoaded", ()=>render(""));
+</script>
+</body>
+</html>
