@@ -53,7 +53,12 @@ fn dev_send_text(state: tauri::State<'_, Surfaces>, id: usize, text: String) -> 
 }
 
 #[tauri::command]
-fn dev_resize(state: tauri::State<'_, Surfaces>, id: usize, cols: u16, rows: u16) -> Result<(), String> {
+fn dev_resize(
+    state: tauri::State<'_, Surfaces>,
+    id: usize,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
     let mut surfaces = state.0.lock().map_err(|_| "surfaces poisoned")?;
     let engine = surfaces.get_mut(id).ok_or("no such surface")?;
     engine.resize(cols, rows).map_err(|e| e.to_string())
