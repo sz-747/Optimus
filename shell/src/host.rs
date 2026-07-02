@@ -13,6 +13,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::domain::capacity::CapacityModel;
 use crate::domain::ids::SurfaceId;
 use crate::domain::notifications::{
     NotificationCoordinator, NotificationId, SurfaceNotification, TerminalNotification,
@@ -46,14 +47,22 @@ impl Domain {
         Self::with_surface_factory(Arc::new(NoSurfaceFactory))
     }
 
-    /// Build the domain over a concrete [`SurfaceFactory`] — the seam the app wires the
-    /// engine bridge onto (and tests use to inject a recording surface). Ungoverned capacity for
-    /// now; the RAM safe-zone model is attached with the spawn command that actually creates panes.
+    /// Build the domain over a concrete [`SurfaceFactory`], ungoverned (tests, degraded startup).
     pub fn with_surface_factory(factory: Arc<dyn SurfaceFactory>) -> Self {
+        Self::with_surfaces(factory, None)
+    }
+
+    /// Build the domain over a concrete [`SurfaceFactory`] and an optional RAM safe-zone
+    /// [`CapacityModel`] — the seam the app wires the engine bridge + capacity governor onto (the
+    /// crown-jewel spawn cap). `None` capacity leaves the manager ungoverned (tests).
+    pub fn with_surfaces(
+        factory: Arc<dyn SurfaceFactory>,
+        capacity: Option<Arc<CapacityModel>>,
+    ) -> Self {
         Self {
             workspaces: WorkspaceManager::new(),
             notifications: NotificationCoordinator::new(),
-            surfaces: SurfaceManager::new(factory, None),
+            surfaces: SurfaceManager::new(factory, capacity),
         }
     }
 
@@ -91,6 +100,14 @@ impl Domain {
     pub fn send_key(&self, surface: SurfaceId, virtual_key: u32, modifiers: u32) {
         if let Some(live) = self.surfaces.get(surface) {
             live.send_key(virtual_key, modifiers);
+        }
+    }
+
+    /// Resize the live surface's grid (the frontend `dev_resize` path — xterm.js fit). No-op when
+    /// no engine backs the id.
+    pub fn resize(&self, surface: SurfaceId, cols: u16, rows: u16) {
+        if let Some(live) = self.surfaces.get(surface) {
+            live.resize(cols, rows);
         }
     }
 
@@ -282,15 +299,25 @@ pub struct DomainHost {
 }
 
 impl DomainHost {
-    /// Spawn the domain thread and return a handle to it. The [`Domain`] is built on that thread
-    /// and never leaves it — the only thing that crosses the channel is `Send` work + `Send`
-    /// arguments.
+    /// Spawn the domain thread with no live-surface backing ([`NoSurfaceFactory`], ungoverned) —
+    /// used by tests and the pipe-only paths. The app uses [`Self::spawn_with`] to install the
+    /// engine factory + capacity governor.
     pub fn spawn() -> Self {
+        Self::spawn_with(Arc::new(NoSurfaceFactory), None)
+    }
+
+    /// Spawn the domain thread over a concrete [`SurfaceFactory`] and optional [`CapacityModel`].
+    /// The [`Domain`] is built on that thread and never leaves it — only `Send` work + `Send`
+    /// arguments cross the channel (the factory and capacity model are `Send + Sync`).
+    pub fn spawn_with(
+        factory: Arc<dyn SurfaceFactory>,
+        capacity: Option<Arc<CapacityModel>>,
+    ) -> Self {
         let (tx, rx) = mpsc::channel::<Job>();
         thread::Builder::new()
             .name("optimus-domain".into())
             .spawn(move || {
-                let mut domain = Domain::new();
+                let mut domain = Domain::with_surfaces(factory, capacity);
                 while let Ok(job) = rx.recv() {
                     job(&mut domain);
                 }
@@ -428,6 +455,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("key:{}:{virtual_key}:{modifiers}", self.id));
+        }
+        fn resize(&self, cols: u16, rows: u16) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("resize:{}:{cols}:{rows}", self.id));
         }
         fn shutdown(&self) {
             self.log

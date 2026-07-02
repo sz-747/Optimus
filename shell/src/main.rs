@@ -2,14 +2,18 @@
 // Debug builds keep the console for logs.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use optimus_engine::{Engine, EngineEvent, EngineOptions};
 use tauri::ipc::Channel;
 use tauri::Manager;
+use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
+use optimus_shell::domain::capacity::{CapacityModel, CapacityProvider};
 use optimus_shell::domain::ids::SurfaceId;
 use optimus_shell::domain::notifications::{NotificationId, TerminalNotification};
+use optimus_shell::domain::surface_manager::{Surface, SurfaceFactory};
 use optimus_shell::host::DomainHost;
 use optimus_shell::ipc::access::{self, AuthState};
 use optimus_shell::ipc::dpapi::Win32SecretProtector;
@@ -18,60 +22,297 @@ use optimus_shell::ipc::password::PasswordStore;
 use optimus_shell::ipc::pipe_server::{DispatchFn, PipeServer, PipeServerConfig};
 use optimus_shell::ipc::router::{self, SocketEffects};
 
-/// Live terminal surfaces. P1 dev plumbing — the real SurfaceManager (reserve/commit,
-/// capacity gate) arrives with the P2 domain port and replaces this flat list.
-#[derive(Default)]
-struct Surfaces(Mutex<Vec<Engine>>);
+/// The live engine-backed [`Surface`]: owns one [`Engine`] behind a `Mutex<Option<_>>`. The
+/// `Option` lets [`shutdown`](Surface::shutdown) drop the engine exactly once (idempotent — R2);
+/// the `Mutex` gives the `&self` trait methods the `&mut Engine` they need and makes the
+/// `Send`-but-`!Sync` engine `Sync`, so the manager can hold it as `Arc<dyn Surface>`.
+struct EngineSurface {
+    id: SurfaceId,
+    engine: Mutex<Option<Engine>>,
+}
 
-/// P1 exit-gate command: spawn a shell and stream its raw VT bytes to the frontend over a
-/// Channel (backpressured, per-surface — plan §3 item 4; never `AppHandle::emit` for PTY
-/// output). Returns the index the caller uses for input/resize.
-#[tauri::command]
-fn dev_spawn_shell(
-    state: tauri::State<'_, Surfaces>,
+impl EngineSurface {
+    fn new(id: SurfaceId, engine: Engine) -> Self {
+        Self {
+            id,
+            engine: Mutex::new(Some(engine)),
+        }
+    }
+
+    /// Run `f` against the live engine; nothing if it has already been shut down.
+    fn with_engine<R>(&self, f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
+        self.engine
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+            .map(f)
+    }
+}
+
+impl Surface for EngineSurface {
+    fn id(&self) -> SurfaceId {
+        self.id
+    }
+
+    // Compositing + OS focus are the WebView/xterm.js's job now — the engine surface owns no
+    // window, so these levers no-op (the C# GPU-panel activate/focus has no analog here).
+    fn set_active(&self, _active: bool) {}
+    fn focus_surface(&self) {}
+
+    fn send_text(&self, text: &str) {
+        self.with_engine(|e| e.send_text(text));
+    }
+
+    fn send_key(&self, virtual_key: u32, modifiers: u32) {
+        if let Some(bytes) = encode_key(virtual_key, modifiers) {
+            self.with_engine(|e| e.send_text(&bytes));
+        }
+    }
+
+    fn resize(&self, cols: u16, rows: u16) {
+        // Resize failure is non-fatal (the child may have exited); the grid just stays as-is.
+        self.with_engine(|e| {
+            let _ = e.resize(cols, rows);
+        });
+    }
+
+    fn shutdown(&self) {
+        // Drop the engine — its Drop drains + tears down the PTY and joins the worker. take()
+        // makes a second shutdown a no-op (R2/R9).
+        let _ = self
+            .engine
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+}
+
+/// Windows virtual-key + modifier bitmask → the VT byte sequence a terminal expects. The frontend
+/// encodes its own keys via xterm.js `onData`; this is the external-agent `surface.send_key` path.
+/// Modifier bits match `ChordModifiers` (Ctrl=1, Shift=2, Alt=4, Super=8).
+///
+/// ponytail: covers Enter/Tab/Esc/Backspace/arrows/Home/End/Delete + Ctrl-letter; returns `None`
+/// for anything unmapped so an unknown key is dropped rather than mis-encoded. Grow the table (or
+/// move to xterm's CSI-u model) when agents need function/keypad keys or Shift+arrow selection.
+fn encode_key(virtual_key: u32, modifiers: u32) -> Option<String> {
+    const CTRL: u32 = 1;
+    const ALT: u32 = 4;
+    let alt = modifiers & ALT != 0;
+
+    // Ctrl + A..Z → control byte 0x01..0x1A (Ctrl-A = 0x01, Ctrl-C = 0x03).
+    if modifiers & CTRL != 0 && (0x41..=0x5A).contains(&virtual_key) {
+        return Some(char::from((virtual_key - 0x40) as u8).to_string());
+    }
+
+    let seq = match virtual_key {
+        0x0D => "\r",      // VK_RETURN
+        0x09 => "\t",      // VK_TAB
+        0x1B => "\x1b",    // VK_ESCAPE
+        0x08 => "\x7f",    // VK_BACK → DEL (terminal convention)
+        0x25 => "\x1b[D",  // VK_LEFT
+        0x26 => "\x1b[A",  // VK_UP
+        0x27 => "\x1b[C",  // VK_RIGHT
+        0x28 => "\x1b[B",  // VK_DOWN
+        0x24 => "\x1b[H",  // VK_HOME
+        0x23 => "\x1b[F",  // VK_END
+        0x2E => "\x1b[3~", // VK_DELETE
+        _ => return None,
+    };
+    // Alt is meta: prefix ESC (the common xterm convention).
+    Some(if alt {
+        format!("\x1b{seq}")
+    } else {
+        seq.to_string()
+    })
+}
+
+/// A per-surface output sink staged by the spawn command just before creation. The factory runs
+/// inside `try_create_surface` on the domain thread, so it cannot receive the invoke's `Channel`
+/// through the [`SurfaceFactory::create`] signature — the command stashes it here by id first.
+struct StagedSink {
     on_output: Channel<Vec<u8>>,
     on_event: Channel<String>,
-) -> Result<usize, String> {
-    let events = on_event.clone();
-    let mut engine = Engine::new(
-        EngineOptions::default(),
-        Box::new(move |bytes| {
-            let _ = on_output.send(bytes.to_vec());
-        }),
-        Box::new(move |ev| {
-            let msg = match ev {
-                EngineEvent::Toast { title, body } => format!("toast: {title} — {body}"),
-                EngineEvent::ChildExit { code } => format!("child exit: {code}"),
-            };
-            let _ = events.send(msg);
-        }),
-    )
-    .map_err(|e| e.to_string())?;
-    engine.spawn_shell("", None).map_err(|e| e.to_string())?;
+}
 
-    let mut surfaces = state.0.lock().map_err(|_| "surfaces poisoned")?;
-    surfaces.push(engine);
-    Ok(surfaces.len() - 1)
+/// Builds [`EngineSurface`]s for the domain's `SurfaceManager` — the single owner of live engines
+/// now (KTD9; the flat `Vec<Engine>` dev-plumbing is gone). Each spawn stages its per-surface
+/// [`Channel`]s (via [`Self::stage`]); `create` pops them and wires a fresh engine's byte + event
+/// streams to that invoke's channels, then spawns the shell.
+struct EngineSurfaceFactory {
+    /// Per-surface sinks awaiting creation, keyed by the id the spawn command will create.
+    pending: Mutex<HashMap<SurfaceId, StagedSink>>,
+    job_memory_limit_bytes: usize,
+}
+
+impl EngineSurfaceFactory {
+    fn new(job_memory_limit_bytes: usize) -> Self {
+        Self {
+            pending: Mutex::new(HashMap::new()),
+            job_memory_limit_bytes,
+        }
+    }
+
+    /// Stash this invoke's output/event channels under `id` so the imminent `create(id, …)` wires
+    /// the engine to them.
+    fn stage(&self, id: SurfaceId, on_output: Channel<Vec<u8>>, on_event: Channel<String>) {
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, StagedSink { on_output, on_event });
+    }
+
+    /// Drop a staged sink whose creation never happened (refused at cap, or a dead domain thread).
+    /// Idempotent — a sink already consumed by `create` is simply absent.
+    fn unstage(&self, id: SurfaceId) {
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&id);
+    }
+}
+
+impl SurfaceFactory for EngineSurfaceFactory {
+    fn create(
+        &self,
+        id: SurfaceId,
+        cwd: Option<&str>,
+        cmdline: Option<&str>,
+    ) -> Result<Arc<dyn Surface>, String> {
+        let StagedSink {
+            on_output,
+            on_event,
+        } = self
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&id)
+            .ok_or_else(|| {
+                format!("surface {id}: no staged output channel (spawn command must stage first)")
+            })?;
+
+        let mut engine = Engine::new(
+            EngineOptions {
+                job_memory_limit_bytes: self.job_memory_limit_bytes,
+                ..EngineOptions::default()
+            },
+            Box::new(move |bytes| {
+                let _ = on_output.send(bytes.to_vec());
+            }),
+            Box::new(move |ev| {
+                let msg = match ev {
+                    EngineEvent::Toast { title, body } => format!("toast: {title} — {body}"),
+                    EngineEvent::ChildExit { code } => format!("child exit: {code}"),
+                };
+                let _ = on_event.send(msg);
+            }),
+        )
+        .map_err(|e| e.to_string())?;
+        engine
+            .spawn_shell(cmdline.unwrap_or(""), cwd)
+            .map_err(|e| e.to_string())?;
+        Ok(Arc::new(EngineSurface::new(id, engine)))
+    }
+}
+
+/// Production capacity facts from `GlobalMemoryStatusEx`. ponytail: a static safe-zone cap computed
+/// once at startup from available RAM + commit headroom — the hard crown-jewel guarantee (spawns
+/// refuse at the cap). The adaptive tier (OS low-memory notifications, per-process calibration via
+/// `GetPerformanceInfo` / `PrivateUsage`) is deferred; wire it (plan U3) when the cap must tighten
+/// under live pressure.
+struct Win32CapacityProvider;
+
+impl Win32CapacityProvider {
+    fn status() -> MEMORYSTATUSEX {
+        let mut status = MEMORYSTATUSEX {
+            dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: `status` is a live, correctly-sized MEMORYSTATUSEX; the call only writes into it.
+        let _ = unsafe { GlobalMemoryStatusEx(&mut status) };
+        status
+    }
+}
+
+impl CapacityProvider for Win32CapacityProvider {
+    fn total_phys_bytes(&self) -> u64 {
+        Self::status().ullTotalPhys
+    }
+    fn available_phys_bytes(&self) -> u64 {
+        Self::status().ullAvailPhys
+    }
+    fn commit_headroom_bytes(&self) -> u64 {
+        // ullAvailPageFile = CommitLimit − CommitTotal (how much more can be committed).
+        // GetPerformanceInfo would give the exact pages; this is close enough for the cap.
+        Self::status().ullAvailPageFile
+    }
+    fn is_low_memory_signaled(&self) -> bool {
+        false // ponytail: static cap — no live tightening yet (see struct doc)
+    }
+    fn subscribe_low_memory(&self, _listener: Box<dyn Fn() + Send + Sync>) {}
+    fn measure_process_private_bytes(&self, _pid: i32) -> Option<u64> {
+        None // calibration refinement deferred (the seed budget governs the cap)
+    }
+}
+
+/// P4 exit-gate command: back the selected workspace's focused surface with a live shell and stream
+/// its raw VT bytes to the frontend over a per-surface `Channel` (backpressured — plan §3 item 4;
+/// never `AppHandle::emit` for PTY output). Creation runs through the domain's capacity-governed
+/// `SurfaceManager`, so a spawn past the RAM safe-zone cap is refused. Returns the [`SurfaceId`] the
+/// frontend echoes back for input/resize — the same id external agents name over the pipe.
+///
+/// ponytail: one live terminal backing the model's seeded pane. Multi-pane spawn (allocating a new
+/// tree tab + setting `OPTIMUS_SURFACE_ID` in the child env) is future work; today the agent path
+/// resolves to this one surface via `selected_focused_surface`.
+#[tauri::command]
+fn dev_spawn_shell(
+    factory: tauri::State<'_, Arc<EngineSurfaceFactory>>,
+    host: tauri::State<'_, DomainHost>,
+    on_output: Channel<Vec<u8>>,
+    on_event: Channel<String>,
+) -> Result<i32, String> {
+    let surface = host
+        .query(|d| d.selected_focused_surface())
+        .ok_or("no focused surface to back")?;
+
+    factory.stage(surface, on_output, on_event);
+
+    // Option<_> so `query` has a Default for a dead domain thread (None → the error arm below).
+    let outcome: Option<Result<i32, String>> = host.query(move |d| {
+        Some(match d.try_create_surface(surface, None, None) {
+            Ok(Some(id)) => Ok(id.0),
+            Ok(None) => Err("safe-zone full — close a workspace to spawn more".to_string()),
+            Err(e) => Err(e.to_string()),
+        })
+    });
+
+    match outcome {
+        Some(Ok(id)) => Ok(id),
+        Some(Err(msg)) => {
+            factory.unstage(surface); // refused at cap: the staged sink was never consumed
+            Err(msg)
+        }
+        None => {
+            factory.unstage(surface);
+            Err("domain thread unavailable".to_string())
+        }
+    }
 }
 
 #[tauri::command]
-fn dev_send_text(state: tauri::State<'_, Surfaces>, id: usize, text: String) -> Result<(), String> {
-    let mut surfaces = state.0.lock().map_err(|_| "surfaces poisoned")?;
-    let engine = surfaces.get_mut(id).ok_or("no such surface")?;
-    engine.send_text(&text);
+fn dev_send_text(host: tauri::State<'_, DomainHost>, id: i32, text: String) -> Result<(), String> {
+    host.run(move |d| d.send_text(SurfaceId(id), &text));
     Ok(())
 }
 
 #[tauri::command]
 fn dev_resize(
-    state: tauri::State<'_, Surfaces>,
-    id: usize,
+    host: tauri::State<'_, DomainHost>,
+    id: i32,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let mut surfaces = state.0.lock().map_err(|_| "surfaces poisoned")?;
-    let engine = surfaces.get_mut(id).ok_or("no such surface")?;
-    engine.resize(cols, rows).map_err(|e| e.to_string())
+    host.run(move |d| d.resize(SurfaceId(id), cols, rows));
+    Ok(())
 }
 
 /// App-side implementation of the socket command surface. Auth is live (DPAPI/env password store);
@@ -271,16 +512,27 @@ fn main() {
                 let _ = win.set_focus();
             }
         }))
-        .manage(Surfaces::default())
         // Start the CLI control pipe only in the instance that actually becomes the app —
         // `setup` does not run in a secondary instance the single-instance plugin turns away,
         // so we never briefly bind a second server on the same pipe name.
         .setup(|app| {
-            // The domain thread owns the workspace + notification model; the pipe server and
-            // (later) the frontend commands both drive it through this one handle.
-            let host = DomainHost::spawn();
+            // The RAM safe-zone governor (crown jewel): a static cap computed from this machine's
+            // memory at startup — the SurfaceManager refuses spawns past it.
+            let capacity = Arc::new(CapacityModel::new(Arc::new(Win32CapacityProvider), None));
+            // The engine-backed surface factory: the single owner of live engines. Held in managed
+            // state too, so the spawn command can stage each invoke's output channel before create.
+            // ponytail: no hard per-process memory cap (0) — the job still KILL_ON_JOB_CLOSE-ties
+            // each shell's lifetime; the count-based safe zone is the real guarantee. Wire a real
+            // per-process ceiling (≈2× a calibrated budget) once calibration is trustworthy.
+            let factory = Arc::new(EngineSurfaceFactory::new(0));
+
+            // The domain thread owns the workspace + notification + surface model; the pipe server
+            // and the frontend commands both drive it through this one handle.
+            let host =
+                DomainHost::spawn_with(factory.clone() as Arc<dyn SurfaceFactory>, Some(capacity));
             app.manage(start_pipe_server(host.clone()));
             app.manage(host);
+            app.manage(factory);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -334,5 +586,39 @@ mod tests {
             .expect("notifications array");
         assert_eq!(1, notifications.len(), "expected one recorded notification: {listed}");
         assert_eq!(notifications[0]["title"], "build");
+    }
+
+    /// The `surface.send_key` encoder maps the keys agents actually send and drops the rest.
+    #[test]
+    fn encode_key_maps_the_minimal_vt_set() {
+        assert_eq!(Some("\r".to_string()), encode_key(0x0D, 0)); // Enter
+        assert_eq!(Some("\x1b[A".to_string()), encode_key(0x26, 0)); // Up arrow → CSI A
+        assert_eq!(Some("\x03".to_string()), encode_key(0x43, 1)); // Ctrl-C → 0x03
+        assert_eq!(Some("\x1b\x1b[D".to_string()), encode_key(0x25, 4)); // Alt-Left → meta ESC + CSI D
+        assert_eq!(None, encode_key(0x70, 0)); // F1 — unmapped, dropped not mis-encoded
+    }
+
+    /// The factory refuses (no engine spawned) when the spawn command never staged a sink — the
+    /// invariant that keeps a surface's PTY output wired to the right invoke's Channel.
+    #[test]
+    fn factory_refuses_to_create_without_a_staged_sink() {
+        let factory = EngineSurfaceFactory::new(0);
+        let err = match factory.create(SurfaceId(1), None, None) {
+            Ok(_) => panic!("expected an error with no staged sink"),
+            Err(e) => e,
+        };
+        assert!(err.contains("no staged output channel"), "{err}");
+    }
+
+    /// The real capacity provider reads this machine's RAM — proves the `GlobalMemoryStatusEx`
+    /// wiring (feature + struct + call) is correct, so the safe-zone cap is computed from real
+    /// numbers rather than a zeroed struct (which would floor the cap to 0 and refuse every spawn).
+    #[test]
+    fn win32_capacity_provider_reads_nonzero_physical_ram() {
+        let provider = Win32CapacityProvider;
+        assert!(
+            provider.total_phys_bytes() > 0,
+            "GlobalMemoryStatusEx returned 0 total physical RAM"
+        );
     }
 }

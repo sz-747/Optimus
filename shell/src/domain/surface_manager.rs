@@ -43,6 +43,10 @@ pub trait Surface: Send + Sync {
     /// so the concrete engine-backed impl owns the virtual-key → bytes encoding.
     fn send_key(&self, virtual_key: u32, modifiers: u32);
 
+    /// Resize the terminal grid (xterm.js `fit` computes cols/rows; pixel geometry/DPI are
+    /// the frontend's problem). No-op for a surface with no resizable backing.
+    fn resize(&self, cols: u16, rows: u16);
+
     /// Tear the surface down: stop its render thread / engine, then release native
     /// resources. Must be idempotent (R2/R9) and must run independently of view unload
     /// so re-parenting never destroys a live shell (KTD9/R10).
@@ -347,6 +351,13 @@ mod tests {
                 .push(format!("key:{}:{virtual_key}:{modifiers}", self.id));
         }
 
+        fn resize(&self, cols: u16, rows: u16) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("resize:{}:{cols}:{rows}", self.id));
+        }
+
         fn shutdown(&self) {
             *self.shutdown_count.lock().unwrap() += 1;
             self.log
@@ -559,6 +570,7 @@ mod tests {
         fn focus_surface(&self) {}
         fn send_text(&self, _text: &str) {}
         fn send_key(&self, _virtual_key: u32, _modifiers: u32) {}
+        fn resize(&self, _cols: u16, _rows: u16) {}
         fn shutdown(&self) {}
     }
 
