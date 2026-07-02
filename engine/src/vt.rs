@@ -1,108 +1,14 @@
-//! `wezterm-term` wiring (plan §2.2 / §8 U4): build the VT `Terminal` and route its parsed
-//! OSC notifications to the host via the FFI event sink.
+//! OSC 99 (Kitty desktop notifications) sniffer.
 //!
-//! We pick `wezterm-term` over `alacritty_terminal` specifically for its `AlertHandler`
-//! trait, which surfaces `Alert::ToastNotification` (OSC 9 / OSC 777) and `Alert::SetUserVar`
-//! (iTerm2 OSC 1337) as typed events — the foundation of the notification feature (Phase 3).
-//! Phase 1 wires the path (and exercises it in spike 5) but does not yet surface events.
-
-use std::sync::{Arc, Mutex};
-
-use wezterm_term::color::ColorPalette;
-use wezterm_term::{Alert, AlertHandler, Terminal, TerminalConfiguration, TerminalSize};
-
-use crate::ffi::events::{event_kind, EventSink};
-
-/// Shared, late-bound host-event sink. The render thread's [`EngineAlertHandler`] reads it;
-/// the FFI `set_event_callback` (UI thread) writes it. `None` until the host registers.
-pub type SharedSink = Arc<Mutex<Option<EventSink>>>;
-
-/// Minimal [`TerminalConfiguration`]. Only `color_palette` is required; we also set the
-/// scrollback depth and opt into title reporting so `Alert::WindowTitleChanged` fires.
-#[derive(Debug)]
-pub struct TermConfig {
-    scrollback: usize,
-}
-
-impl TermConfig {
-    pub fn new(scrollback: usize) -> Self {
-        Self { scrollback }
-    }
-}
-
-impl TerminalConfiguration for TermConfig {
-    fn color_palette(&self) -> ColorPalette {
-        ColorPalette::default()
-    }
-
-    fn scrollback_size(&self) -> usize {
-        self.scrollback
-    }
-
-    fn enable_title_reporting(&self) -> bool {
-        true
-    }
-}
-
-/// Forwards `wezterm-term` alerts to the host-event sink. Runs on the render thread (alerts
-/// fire synchronously inside `advance_bytes`); the C# callback hops to the UI thread itself.
-pub struct EngineAlertHandler {
-    sink: SharedSink,
-}
-
-impl EngineAlertHandler {
-    pub fn new(sink: SharedSink) -> Self {
-        Self { sink }
-    }
-}
-
-impl AlertHandler for EngineAlertHandler {
-    fn alert(&mut self, alert: Alert) {
-        let guard = match self.sink.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        let Some(sink) = guard.as_ref() else {
-            return;
-        };
-        match alert {
-            Alert::Bell => sink.emit_scalar(event_kind::BELL, 0),
-            Alert::ToastNotification { title, body, .. } => {
-                sink.emit_text(event_kind::TOAST, title.as_deref().unwrap_or(""), &body, 0)
-            }
-            Alert::WindowTitleChanged(title) => sink.emit_text(event_kind::TITLE, &title, "", 0),
-            Alert::SetUserVar { name, value } => {
-                sink.emit_text(event_kind::SET_USER_VAR, &name, &value, 0)
-            }
-            // CurrentWorkingDirectoryChanged carries no path on the alert; the render loop polls
-            // `Terminal::get_current_dir()` instead. Remaining variants are not surfaced in Phase 1.
-            _ => {}
-        }
-    }
-}
-
-/// Construct a `wezterm-term` `Terminal` wired to `writer` (the PTY input) and the host sink.
-pub fn build_terminal(size: TerminalSize, scrollback: usize, writer: Box<dyn std::io::Write + Send>, sink: SharedSink) -> Terminal {
-    let config = Arc::new(TermConfig::new(scrollback));
-    let mut terminal = Terminal::new(size, config, "optimus", env!("CARGO_PKG_VERSION"), writer);
-    terminal.set_notification_handler(Box::new(EngineAlertHandler::new(sink)));
-    terminal
-}
-
-// ===========================================================================================
-// OSC 99 (Kitty desktop notifications) sniffer — plan Phase 3 U1.
-//
-// The pinned `wezterm-term` (tag 20240203-110809-5046fc22) parses OSC 9 / OSC 777 into
-// `Alert::ToastNotification` but has no OSC-99 parser. Rather than fork the terminal core we
-// observe the *same* byte stream that feeds `Terminal::advance_bytes`, recognize OSC 99, and
-// surface it through the existing `event_kind::TOAST` host path (KTD2) — so a Kitty
-// notification is indistinguishable downstream from OSC 9/777 (R1, AE3).
-//
-// The sniffer is a pure observer: it never modifies the stream (wezterm still sees the OSC 99
-// and harmlessly ignores it). It is a small byte-at-a-time state machine so a sequence split
-// across PTY read bursts (transport chunking) reassembles, and it accumulates `d=0` protocol
-// chunks per identifier until the final `d=1` chunk arrives.
-// ===========================================================================================
+//! Post-migration (plan D1′), xterm.js parses all VT frontend-side — the engine's only
+//! remaining parser is this OSC-99 scanner. It stays Rust-side because agents emit OSC 99
+//! from arbitrary child processes and sniffing the raw PTY bytes in the backend is
+//! authoritative regardless of what the frontend does.
+//!
+//! The sniffer is a pure observer: it never modifies the stream. It is a small
+//! byte-at-a-time state machine so a sequence split across PTY read bursts (transport
+//! chunking) reassembles, and it accumulates `d=0` protocol chunks per identifier until
+//! the final `d=1` chunk arrives.
 
 const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
@@ -145,8 +51,8 @@ enum State {
     PayloadEsc,
 }
 
-/// Stateful OSC-99 scanner. Held in the render thread's `RenderState` so state survives across
-/// PTY read bursts. Feed it the same bytes handed to `Terminal::advance_bytes`.
+/// Stateful OSC-99 scanner. Held in the worker thread's state so a sequence survives across
+/// PTY read bursts. Feed it the same bytes handed to the frontend.
 pub struct Osc99Sniffer {
     state: State,
     num: Vec<u8>,
@@ -208,7 +114,7 @@ impl Osc99Sniffer {
                         self.buf.clear();
                         self.state = State::Payload;
                     } else {
-                        // Some other OSC (9, 777, 1337, ...) — leave it to wezterm-term.
+                        // Some other OSC (9, 777, 1337, ...) — xterm.js handles those.
                         self.state = State::Ground;
                     }
                 }
@@ -300,7 +206,11 @@ impl Osc99Sniffer {
 
         let over = {
             let acc = &mut self.pending[idx];
-            let target = if p_is_body { &mut acc.body } else { &mut acc.title };
+            let target = if p_is_body {
+                &mut acc.body
+            } else {
+                &mut acc.title
+            };
             if target.len() + text.len() > MAX_OSC99_ACCUM {
                 true
             } else {
@@ -379,7 +289,10 @@ mod tests {
 
     #[test]
     fn explicit_body_payload() {
-        assert_eq!(feed_all(b"\x1b]99;p=body;the body\x1b\\"), vec![note("", "the body")]);
+        assert_eq!(
+            feed_all(b"\x1b]99;p=body;the body\x1b\\"),
+            vec![note("", "the body")]
+        );
     }
 
     #[test]
@@ -388,7 +301,10 @@ mod tests {
         // First chunk: title, more coming (d=0).
         assert!(s.feed(b"\x1b]99;p=title:i=7:d=0;Build\x07").is_empty());
         // Final chunk: body, done (d=1) — combine into one emit.
-        assert_eq!(s.feed(b"\x1b]99;p=body:i=7:d=1;passed\x07"), vec![note("Build", "passed")]);
+        assert_eq!(
+            s.feed(b"\x1b]99;p=body:i=7:d=1;passed\x07"),
+            vec![note("Build", "passed")]
+        );
     }
 
     #[test]
@@ -429,12 +345,18 @@ mod tests {
 
     #[test]
     fn interleaved_text_yields_exactly_one_emit() {
-        assert_eq!(feed_all(b"hello \x1b]99;;world\x07 bye"), vec![note("world", "")]);
+        assert_eq!(
+            feed_all(b"hello \x1b]99;;world\x07 bye"),
+            vec![note("world", "")]
+        );
     }
 
     #[test]
     fn unknown_metadata_key_is_ignored() {
-        assert_eq!(feed_all(b"\x1b]99;u=2:p=body;text\x07"), vec![note("", "text")]);
+        assert_eq!(
+            feed_all(b"\x1b]99;u=2:p=body;text\x07"),
+            vec![note("", "text")]
+        );
     }
 
     #[test]

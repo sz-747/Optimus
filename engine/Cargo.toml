@@ -2,13 +2,11 @@
 name = "optimus_engine"
 version = "0.1.0"
 edition = "2021"
-description = "Optimus for Windows — terminal engine (VT core + ConPTY + GPU renderer) exposed as a C ABI cdylib"
+description = "Optimus terminal engine — ConPTY lifecycle + OSC-99 sniffer (VT rendering lives in the webview via xterm.js)"
 license = "MIT"
 
 [lib]
-# cdylib: the optimus_engine.dll consumed by the C# app over FFI.
-# rlib:   so integration tests / spikes in this crate can link the engine directly.
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 windows = { version = "0.62", features = [
@@ -19,33 +17,4 @@ windows = { version = "0.62", features = [
     "Win32_System_Threading",
     "Win32_System_IO",
     "Win32_Storage_FileSystem",
-    # SwapChainPanel composition-scale correction (plan §5.2): cast wgpu's DXGI swapchain
-    # to IDXGISwapChain2 and apply an inverse SetMatrixTransform so the panel doesn't
-    # magnify the rendered surface by the DPI/composition scale.
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
 ] }
-# Pinned exactly: 29.0.1 is the version whose DX12 backend exports
-# `SurfaceTargetUnsafe::SwapChainPanel` (gated behind `#[cfg(dx12)]`). See plan §5.1 / §11.
-# DX12 is the only backend we want for the WinUI 3 SwapChainPanel composition path.
-wgpu = { version = "=29.0.1", default-features = false, features = ["dx12"] }
-# GPU glyph atlas + in-pass text renderer (plan §2.2 / §8 U6). 0.11 targets wgpu 29.
-glyphon = "0.11"
-# POD casting for the quad instance/uniform buffers.
-bytemuck = { version = "1", features = ["derive"] }
-# Minimal executor to block on wgpu's async adapter/device requests from the render thread.
-pollster = "0.4"
-# VT core (plan §2.2 / §8 U4): parses the shell's output into a grid + scrollback and
-# yields parsed OSC notifications via its `AlertHandler` (the reason we pick wezterm-term
-# over alacritty_terminal). Git-pinned to a release tag (unpublished on crates.io at the
-# revision we need). `termwiz` (same repo/tag) supplies the KeyCode/Modifiers input types.
-wezterm-term = { git = "https://github.com/wezterm/wezterm", tag = "20240203-110809-5046fc22" }
-termwiz = { git = "https://github.com/wezterm/wezterm", tag = "20240203-110809-5046fc22" }
-
-[build-dependencies]
-# Generates app/Interop/NativeMethods.g.cs from the #[no_mangle] extern "C" ABI (plan §6).
-csbindgen = "1"
-
-[profile.release]
-opt-level = 3
-lto = "thin"
