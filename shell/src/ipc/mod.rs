@@ -3,7 +3,10 @@
 //! socket naming/discovery/access policy, the DPAPI password store, and the command router.
 
 pub mod access;
+pub mod dpapi;
 pub mod naming;
 pub mod password;
+pub mod peer;
+pub mod pipe_server;
 pub mod router;
 pub mod wire;
