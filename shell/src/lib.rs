@@ -3,4 +3,5 @@
 
 pub mod cli;
 pub mod domain;
+pub mod host;
 pub mod ipc;
