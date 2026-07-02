@@ -17,6 +17,9 @@ use crate::domain::ids::SurfaceId;
 use crate::domain::notifications::{
     NotificationCoordinator, NotificationId, SurfaceNotification, TerminalNotification,
 };
+use crate::domain::surface_manager::{
+    CreateSurfaceError, NoSurfaceFactory, SurfaceFactory, SurfaceManager,
+};
 use crate::domain::workspace::WorkspaceManager;
 
 /// The single-threaded model plane the socket effects mutate: the workspace manager (sidebar
@@ -26,6 +29,7 @@ use crate::domain::workspace::WorkspaceManager;
 pub struct Domain {
     workspaces: WorkspaceManager,
     notifications: NotificationCoordinator,
+    surfaces: SurfaceManager,
 }
 
 impl Default for Domain {
@@ -35,10 +39,21 @@ impl Default for Domain {
 }
 
 impl Domain {
+    /// Build the domain with no live-surface backing: `focus`/`send` resolve the model but reach
+    /// no engine ([`NoSurfaceFactory`]). The frontend spawn command installs the real
+    /// engine-backed factory via [`Self::with_surface_factory`].
     pub fn new() -> Self {
+        Self::with_surface_factory(Arc::new(NoSurfaceFactory))
+    }
+
+    /// Build the domain over a concrete [`SurfaceFactory`] — the seam the app wires the
+    /// engine bridge onto (and tests use to inject a recording surface). Ungoverned capacity for
+    /// now; the RAM safe-zone model is attached with the spawn command that actually creates panes.
+    pub fn with_surface_factory(factory: Arc<dyn SurfaceFactory>) -> Self {
         Self {
             workspaces: WorkspaceManager::new(),
             notifications: NotificationCoordinator::new(),
+            surfaces: SurfaceManager::new(factory, None),
         }
     }
 
@@ -50,13 +65,53 @@ impl Domain {
 
     // ---- Surface verbs -------------------------------------------------------------------------
 
-    /// Select the workspace owning `surface`. The C# `FocusSurface` then focuses the surface
-    /// control; that half needs the view/engine bridge (P4/P5), so here we do only the real,
-    /// view-free step — moving selection to the owning workspace.
+    /// Select the workspace owning `surface`, then focus the live surface if one is registered
+    /// (the port of C# `WorkspaceHost.FocusSurface` → `SelectWorkspace` + `FocusSurfaceById`). The
+    /// workspace select is always real; the surface focus is a no-op until the engine bridge backs
+    /// this id (`find_by_surface` gates on the surface being in a tree, so a stray id does nothing).
     pub fn focus_surface(&mut self, surface: SurfaceId) {
         if let Some(workspace) = self.workspaces.find_by_surface(surface).map(|w| w.id()) {
             self.workspaces.select_workspace(workspace);
+            if let Some(live) = self.surfaces.get(surface) {
+                live.focus_surface();
+            }
         }
+    }
+
+    /// Forward text to the live surface for `surface` (the `surface.send_text` verb). No-op when no
+    /// engine backs the id — a keystroke to a surface that was never spawned has nowhere to land.
+    pub fn send_text(&self, surface: SurfaceId, text: &str) {
+        if let Some(live) = self.surfaces.get(surface) {
+            live.send_text(text);
+        }
+    }
+
+    /// Forward a key press to the live surface for `surface` (the `surface.send_key` verb). No-op
+    /// when no engine backs the id.
+    pub fn send_key(&self, surface: SurfaceId, virtual_key: u32, modifiers: u32) {
+        if let Some(live) = self.surfaces.get(surface) {
+            live.send_key(virtual_key, modifiers);
+        }
+    }
+
+    /// Create the engine-backed surface for `id` through the capacity-governed choke point
+    /// (RAM safe-zone). `Ok(None)` = refused at cap; `Ok(Some(id))` = live. The frontend spawn
+    /// command calls this once the engine factory is installed; with [`NoSurfaceFactory`] it errs.
+    pub fn try_create_surface(
+        &mut self,
+        id: SurfaceId,
+        cwd: Option<&str>,
+        cmdline: Option<&str>,
+    ) -> Result<Option<SurfaceId>, CreateSurfaceError> {
+        Ok(self
+            .surfaces
+            .try_create_surface(id, cwd, cmdline)?
+            .map(|surface| surface.id()))
+    }
+
+    /// Tear down the live surface for `id`, freeing its safe-zone slot. No-op for unknown ids.
+    pub fn dispose_surface(&mut self, id: SurfaceId) {
+        self.surfaces.dispose_surface(id);
     }
 
     // ---- Notification verbs --------------------------------------------------------------------
@@ -341,6 +396,130 @@ mod tests {
         assert_eq!(Some(SurfaceId(7)), parse_surface_id("7"));
         assert_eq!(None, parse_surface_id("S"));
         assert_eq!(None, parse_surface_id("nope"));
+    }
+
+    // ---- Surface routing (focus/send reach the live engine-backed surface) ---------------------
+
+    use crate::domain::surface_manager::Surface;
+
+    /// A live surface that only records the levers pulled on it — the stand-in for the
+    /// engine-backed pane, so a test proves the Domain → SurfaceManager → Surface path end to end.
+    struct RecordingSurface {
+        id: SurfaceId,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Surface for RecordingSurface {
+        fn id(&self) -> SurfaceId {
+            self.id
+        }
+        fn set_active(&self, _active: bool) {}
+        fn focus_surface(&self) {
+            self.log.lock().unwrap().push(format!("focus:{}", self.id));
+        }
+        fn send_text(&self, text: &str) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("text:{}:{text}", self.id));
+        }
+        fn send_key(&self, virtual_key: u32, modifiers: u32) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("key:{}:{virtual_key}:{modifiers}", self.id));
+        }
+        fn shutdown(&self) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("shutdown:{}", self.id));
+        }
+    }
+
+    struct RecordingFactory {
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl SurfaceFactory for RecordingFactory {
+        fn create(
+            &self,
+            id: SurfaceId,
+            _cwd: Option<&str>,
+            _cmdline: Option<&str>,
+        ) -> Result<Arc<dyn Surface>, String> {
+            Ok(Arc::new(RecordingSurface {
+                id,
+                log: Arc::clone(&self.log),
+            }))
+        }
+    }
+
+    fn domain_with_recording_surfaces() -> (Domain, Arc<Mutex<Vec<String>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let factory = Arc::new(RecordingFactory {
+            log: Arc::clone(&log),
+        });
+        (Domain::with_surface_factory(factory), log)
+    }
+
+    #[test]
+    fn send_text_and_send_key_reach_the_live_surface() {
+        let (mut domain, log) = domain_with_recording_surfaces();
+        let surface = domain.selected_focused_surface().unwrap();
+        domain
+            .try_create_surface(surface, None, None)
+            .unwrap()
+            .expect("surface created");
+
+        domain.send_text(surface, "echo hi\r");
+        domain.send_key(surface, 13, 4); // VK_RETURN + a modifier bit
+
+        let log = log.lock().unwrap();
+        assert!(log.contains(&format!("text:{surface}:echo hi\r")), "{log:?}");
+        assert!(log.contains(&format!("key:{surface}:13:4")), "{log:?}");
+    }
+
+    #[test]
+    fn focus_surface_selects_the_workspace_and_focuses_the_live_surface() {
+        let (mut domain, log) = domain_with_recording_surfaces();
+        let surface = domain.selected_focused_surface().unwrap();
+        domain.try_create_surface(surface, None, None).unwrap().unwrap();
+
+        domain.focus_surface(surface);
+
+        assert!(log.lock().unwrap().contains(&format!("focus:{surface}")));
+    }
+
+    #[test]
+    fn send_to_a_surface_with_no_engine_is_a_noop() {
+        let (domain, log) = domain_with_recording_surfaces();
+        // The seeded id is in a tree but was never spawned — nothing backs it.
+        let surface = domain.selected_focused_surface().unwrap();
+
+        domain.send_text(surface, "x");
+        domain.send_key(surface, 13, 0);
+
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn disposed_surface_stops_receiving_input() {
+        let (mut domain, log) = domain_with_recording_surfaces();
+        let surface = domain.selected_focused_surface().unwrap();
+        domain.try_create_surface(surface, None, None).unwrap().unwrap();
+        domain.dispose_surface(surface);
+        log.lock().unwrap().clear(); // drop the shutdown entry
+
+        domain.send_text(surface, "x");
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn default_domain_has_no_surface_factory_and_refuses_creation() {
+        let mut domain = Domain::new();
+        let surface = domain.selected_focused_surface().unwrap();
+        assert!(domain.try_create_surface(surface, None, None).is_err());
     }
 
     // ---- DomainHost (the thread + channel marshalling) -----------------------------------------

@@ -96,11 +96,17 @@ impl SocketEffects for PipeEffects {
         self.host.run(move |d| d.focus_surface(surface));
     }
 
-    // ponytail: send_text/send_key need a live engine-backed surface — there is no SurfaceId→engine
-    // registry yet (dev_spawn_shell is P1 plumbing over a flat Vec). Wire these when the
-    // engine↔surface bridge lands; until then a keystroke has nowhere to go, so no-op.
-    fn send_text(&self, _surface: SurfaceId, _text: &str) {}
-    fn send_key(&self, _surface: SurfaceId, _virtual_key: u32, _modifiers: u32) {}
+    // Routed to the domain's SurfaceManager. Live once the frontend spawn command creates
+    // engine-backed surfaces through the host; until then the id resolves to no engine and the
+    // send is dropped (Domain::send_text/send_key no-op on an unbacked id).
+    fn send_text(&self, surface: SurfaceId, text: &str) {
+        let text = text.to_string();
+        self.host.run(move |d| d.send_text(surface, &text));
+    }
+    fn send_key(&self, surface: SurfaceId, virtual_key: u32, modifiers: u32) {
+        self.host
+            .run(move |d| d.send_key(surface, virtual_key, modifiers));
+    }
 
     fn create_notification_for_target(
         &self,

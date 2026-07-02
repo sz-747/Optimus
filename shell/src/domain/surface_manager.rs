@@ -34,6 +34,15 @@ pub trait Surface: Send + Sync {
     /// Give this surface OS keyboard focus (programmatic — R8).
     fn focus_surface(&self);
 
+    /// Forward already-encoded text (xterm.js `onData` / paste) to the shell (the
+    /// `surface.send_text` socket verb). The engine-backed impl hands the bytes to the PTY.
+    fn send_text(&self, text: &str);
+
+    /// Forward a key press (Windows virtual-key + modifier bitmask — the `surface.send_key`
+    /// socket verb). The frontend normally encodes keys itself; this is the external-agent path,
+    /// so the concrete engine-backed impl owns the virtual-key → bytes encoding.
+    fn send_key(&self, virtual_key: u32, modifiers: u32);
+
     /// Tear the surface down: stop its render thread / engine, then release native
     /// resources. Must be idempotent (R2/R9) and must run independently of view unload
     /// so re-parenting never destroys a live shell (KTD9/R10).
@@ -51,6 +60,23 @@ pub trait SurfaceFactory: Send + Sync {
         cwd: Option<&str>,
         cmdline: Option<&str>,
     ) -> Result<Arc<dyn Surface>, String>;
+}
+
+/// A factory that builds nothing — the [`Domain`](crate::host::Domain)'s default until the
+/// engine-backed factory is installed. Every spawn fails, so the manager holds no live surfaces
+/// and `focus`/`send` route to nothing. The real `SurfaceId → engine` bridge needs the frontend's
+/// per-surface output channel (the `dev_spawn_shell` command), so it is injected by that unit.
+pub struct NoSurfaceFactory;
+
+impl SurfaceFactory for NoSurfaceFactory {
+    fn create(
+        &self,
+        _id: SurfaceId,
+        _cwd: Option<&str>,
+        _cmdline: Option<&str>,
+    ) -> Result<Arc<dyn Surface>, String> {
+        Err("no surface factory installed (frontend spawn bridge not wired)".to_string())
+    }
 }
 
 // ---- Errors --------------------------------------------------------------------------------------
@@ -307,6 +333,20 @@ mod tests {
             self.log.lock().unwrap().push(format!("focus:{}", self.id));
         }
 
+        fn send_text(&self, text: &str) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("text:{}:{text}", self.id));
+        }
+
+        fn send_key(&self, virtual_key: u32, modifiers: u32) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("key:{}:{virtual_key}:{modifiers}", self.id));
+        }
+
         fn shutdown(&self) {
             *self.shutdown_count.lock().unwrap() += 1;
             self.log
@@ -517,6 +557,8 @@ mod tests {
 
         fn set_active(&self, _active: bool) {}
         fn focus_surface(&self) {}
+        fn send_text(&self, _text: &str) {}
+        fn send_key(&self, _virtual_key: u32, _modifiers: u32) {}
         fn shutdown(&self) {}
     }
 
