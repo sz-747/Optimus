@@ -2,4 +2,6 @@
 //! Newline-framed JSON over a Windows named pipe: wire envelopes, method constants,
 //! socket naming/discovery/access policy, the DPAPI password store, and the command router.
 
+pub mod access;
+pub mod naming;
 pub mod wire;
