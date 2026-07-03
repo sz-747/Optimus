@@ -253,6 +253,10 @@ impl Workspace {
 /// C# `WorkspaceCreated` / `WorkspaceClosed` events). `Created` carries the seeded replacement's
 /// id (the workspace lives in the list — the host builds its view); `Closed` carries the removed
 /// workspace by value so the host can tear down its view and engines.
+// `Closed` is intentionally by-value so the host drains the removed workspace's engines. These
+// events are produced one at a time on a close and consumed immediately — never stored in bulk —
+// so the variant-size spread costs nothing; boxing would just add an alloc + deref per close.
+#[allow(clippy::large_enum_variant)]
 pub enum WorkspaceEvent {
     Created(WorkspaceId),
     Closed(Workspace),

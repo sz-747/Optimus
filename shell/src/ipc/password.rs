@@ -18,6 +18,10 @@ const PASSWORD_FILE_NAME: &str = "optimus-socket-password.bin";
 /// `Err` on any failure (tampered/foreign ciphertext); the store treats that as "no password".
 pub trait SecretProtector {
     fn protect(&self, plaintext: &[u8], entropy: Option<&[u8]>) -> Vec<u8>;
+    // The failure is deliberately opaque: any bad ciphertext (tampered, foreign, wrong entropy)
+    // means "no usable password" — the caller never branches on why, so a custom error would be
+    // ceremony. ponytail: promote to a real error type if a caller ever needs the reason.
+    #[allow(clippy::result_unit_err)]
     fn unprotect(&self, encrypted: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, ()>;
 }
 
@@ -35,6 +39,9 @@ impl SecretProtector for NoopSecretProtector {
 
 /// Password source + verifier for the named-pipe socket. All I/O is injected (env, local-app-data
 /// path, existence probe, reader) so behavior is deterministic under test.
+// The injected-I/O closures are a test seam, not a public type; aliasing each `Box<dyn Fn…>`
+// would add names no caller uses. The one constructor already carries the same allow.
+#[allow(clippy::type_complexity)]
 pub struct PasswordStore {
     protector: Box<dyn SecretProtector>,
     get_env: Box<dyn Fn(&str) -> Option<String>>,

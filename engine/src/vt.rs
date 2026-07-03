@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn runaway_sequence_is_capped_without_emit() {
         let mut input = b"\x1b]99;".to_vec();
-        input.extend(std::iter::repeat(b'a').take(70_000));
+        input.extend(std::iter::repeat_n(b'a', 70_000));
         assert!(feed_all(&input).is_empty());
         // And the sniffer recovers: a well-formed sequence afterwards still parses.
         let mut s = Osc99Sniffer::new();
