@@ -1,0 +1,48 @@
+name: CI
+
+# Windows-only: Optimus is a Windows desktop app (ConPTY, WebView2, named pipes, DPAPI). There is
+# no cross-platform target to test, so the whole matrix is windows-latest.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Build the frontend first: shell/build.rs (tauri-build) reads frontendDist (../ui/dist),
+      # so the Rust gates below won't compile until ui/dist exists.
+      - run: npm ci
+      - run: npm run build
+
+      # Gates — each fails the job.
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+      # Release bundle: NSIS per-user installer + WebView2 bootstrapper (see shell/tauri.conf.json).
+      # `tauri` locates shell/tauri.conf.json from the repo root.
+      - run: npm run tauri -- build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: optimus-nsis-installer
+          path: target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
