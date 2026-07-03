@@ -8,10 +8,15 @@ export default {
       name: "inject-tauri-mock",
       apply: "serve",
       transformIndexHtml(html) {
-        // Load the mock (guarded) immediately before main.js so __TAURI__ exists when it evaluates.
+        // Replace the main.js tag with one module that imports the mock THEN main.js — sequential
+        // awaits guarantee __TAURI__ is installed before main.js evaluates (no cross-script ordering
+        // assumption). main.js's first line destructures window.__TAURI__.core, so order is load-bearing.
         const loader =
-          '<script type="module">if(!window.__TAURI__)await import("/mock/tauri-mock.js");</script>\n  ';
-        return html.replace('<script type="module" src="./main.js">', loader + '<script type="module" src="./main.js">');
+          '<script type="module">\n' +
+          '    if (!window.__TAURI__) await import("/mock/tauri-mock.js");\n' +
+          '    await import("/main.js");\n' +
+          "  </script>";
+        return html.replace('<script type="module" src="./main.js"></script>', loader);
       },
     },
   ],
