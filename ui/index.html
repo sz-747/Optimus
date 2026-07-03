@@ -5,9 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Optimus</title>
   <link rel="stylesheet" href="./tokens.css" />
+  <style>
+    /* Single full-window terminal surface (P4.1). Split/sidebar chrome layers on later. */
+    #app { height: 100%; padding: var(--xs); background: var(--surface-0); }
+    #app .xterm { height: 100%; }
+  </style>
 </head>
 <body>
-  <!-- P0 scaffold: empty shell surface. Chrome builds out in P4. -->
   <div id="app"></div>
   <script type="module" src="./main.js"></script>
 </body>
