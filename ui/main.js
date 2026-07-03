@@ -5,6 +5,7 @@
 import { createTerminal, pushResize, disposeTerminal, attachWebgl, detachWebgl } from "./terminal.js";
 import { initCapacity, refreshCapacity } from "./capacity.js";
 import { initSidebar, renderSidebar } from "./sidebar.js";
+import { initPalette, openPalette, isPaletteOpen } from "./palette.js";
 
 const { invoke } = window.__TAURI__.core;
 const app = document.getElementById("app");
@@ -170,6 +171,10 @@ const doSplit = (direction) => spawnInto("split", { direction });
 const doNewTab = () => spawnInto("new_tab");
 const refreshFrom = (command, args) => invoke(command, args).then(render).catch(console.error);
 const refreshSidebar = () => invoke("sidebar_state").then(renderSidebar).catch(console.error);
+async function newWorkspace() {
+  await spawnInto("new_workspace"); // seeds + backs a pane in the new workspace, then renders it
+  refreshSidebar();
+}
 // Close frees a slot — re-render, dispose exactly the terminals the backend freed, refresh meters.
 const doClose = () =>
   invoke("close_focused")
@@ -184,7 +189,7 @@ const doClose = () =>
 // Reserved chords act on the chrome; everything else falls through to the focused xterm untouched.
 
 function onKeydown(e) {
-  if (!e.ctrlKey) return;
+  if (!e.ctrlKey || isPaletteOpen()) return; // while the palette owns focus, chords are its own
   const shift = e.shiftKey;
   const k = e.key;
 
@@ -201,6 +206,7 @@ function onKeydown(e) {
       case "t": return doNewTab;
       case "w": return doClose;
       case "z": return () => refreshFrom("toggle_zoom");
+      case "p": return openPalette;
       case ")":
       case "0": return () => refreshFrom("equalize"); // Ctrl+Shift+0 (shifted '0' is ')')
       default: return null;
@@ -225,10 +231,7 @@ initSidebar({
       .then(render)
       .then(refreshSidebar)
       .catch(console.error),
-  onNew: async () => {
-    await spawnInto("new_workspace"); // seeds + backs a pane in the new workspace, then renders it
-    refreshSidebar();
-  },
+  onNew: newWorkspace,
   onClose: (id) =>
     invoke("close_workspace", { id })
       .then(({ closed, tree }) => {
@@ -239,6 +242,25 @@ initSidebar({
       })
       .catch(console.error),
 });
+
+// The palette lists the same actions the chords fire (single command surface, two entry points).
+initPalette([
+  { label: "Split Right", hint: "Ctrl+Shift+D", run: () => doSplit("right") },
+  { label: "Split Down", hint: "Ctrl+Shift+E", run: () => doSplit("down") },
+  { label: "Split Left", run: () => doSplit("left") },
+  { label: "Split Up", run: () => doSplit("up") },
+  { label: "New Tab", hint: "Ctrl+Shift+T", run: doNewTab },
+  { label: "Close Pane", hint: "Ctrl+Shift+W", run: doClose },
+  { label: "Toggle Zoom", hint: "Ctrl+Shift+Z", run: () => refreshFrom("toggle_zoom") },
+  { label: "Equalize Panes", hint: "Ctrl+Shift+0", run: () => refreshFrom("equalize") },
+  { label: "Next Tab", hint: "Ctrl+Tab", run: () => refreshFrom("select_next_tab") },
+  { label: "Previous Tab", hint: "Ctrl+Shift+Tab", run: () => refreshFrom("select_previous_tab") },
+  { label: "Focus Left", run: () => refreshFrom("move_focus", { direction: "left" }) },
+  { label: "Focus Right", run: () => refreshFrom("move_focus", { direction: "right" }) },
+  { label: "Focus Up", run: () => refreshFrom("move_focus", { direction: "up" }) },
+  { label: "Focus Down", run: () => refreshFrom("move_focus", { direction: "down" }) },
+  { label: "New Workspace", run: newWorkspace },
+]);
 
 initCapacity();
 refreshSidebar();
