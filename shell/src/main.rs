@@ -339,10 +339,12 @@ struct SpawnResult {
 }
 
 /// A close op's result: the surface ids whose engines were torn down (so the frontend disposes
-/// exactly those terminals) plus the fresh layout.
+/// exactly those terminals), whether the tree was re-seeded (last pane/workspace closed → the
+/// frontend backs the fresh seeded surface via `spawn`), plus the fresh layout.
 #[derive(serde::Serialize, Default)]
 struct CloseResult {
     closed: Vec<i32>,
+    reseeded: bool,
     tree: TreeView,
 }
 
@@ -503,13 +505,10 @@ fn new_workspace(
 #[tauri::command]
 fn close_workspace(host: tauri::State<'_, DomainHost>, id: i32) -> CloseResult {
     host.query(move |d| {
-        let closed = d
-            .close_workspace(WorkspaceId(id))
-            .iter()
-            .map(|s| s.0)
-            .collect();
+        let report = d.close_workspace(WorkspaceId(id));
         CloseResult {
-            closed,
+            closed: report.closed.iter().map(|s| s.0).collect(),
+            reseeded: report.reseeded,
             tree: d.tree_view(),
         }
     })
@@ -527,9 +526,10 @@ fn select_workspace(host: tauri::State<'_, DomainHost>, id: i32) -> TreeView {
 #[tauri::command]
 fn close_surface(host: tauri::State<'_, DomainHost>, id: i32) -> CloseResult {
     host.query(move |d| {
-        let closed = d.close_surface(SurfaceId(id)).iter().map(|s| s.0).collect();
+        let report = d.close_surface(SurfaceId(id));
         CloseResult {
-            closed,
+            closed: report.closed.iter().map(|s| s.0).collect(),
+            reseeded: report.reseeded,
             tree: d.tree_view(),
         }
     })
@@ -538,9 +538,10 @@ fn close_surface(host: tauri::State<'_, DomainHost>, id: i32) -> CloseResult {
 #[tauri::command]
 fn close_focused(host: tauri::State<'_, DomainHost>) -> CloseResult {
     host.query(|d| {
-        let closed = d.close_focused().iter().map(|s| s.0).collect();
+        let report = d.close_focused();
         CloseResult {
-            closed,
+            closed: report.closed.iter().map(|s| s.0).collect(),
+            reseeded: report.reseeded,
             tree: d.tree_view(),
         }
     })

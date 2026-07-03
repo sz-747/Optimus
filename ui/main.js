@@ -177,12 +177,14 @@ async function newWorkspace() {
   refreshSidebar();
 }
 // Close frees a slot — re-render, dispose exactly the terminals the backend freed, refresh meters.
+// If closing emptied the tree, the backend re-seeded a fresh pane (never contentless) — back it.
 const doClose = () =>
   invoke("close_focused")
-    .then(({ closed, tree }) => {
+    .then(({ closed, reseeded, tree }) => {
       render(tree);
       reap(closed);
       refreshCapacity();
+      if (reseeded) spawnInto("spawn");
     })
     .catch(console.error);
 
@@ -235,11 +237,12 @@ initSidebar({
   onNew: newWorkspace,
   onClose: (id) =>
     invoke("close_workspace", { id })
-      .then(({ closed, tree }) => {
+      .then(({ closed, reseeded, tree }) => {
         render(tree);
         reap(closed);
         refreshCapacity();
         refreshSidebar();
+        if (reseeded) spawnInto("spawn"); // closed the last workspace → back its replacement
       })
       .catch(console.error),
 });

@@ -28,6 +28,17 @@ use crate::view::{
     SidebarRowView, ToastView, TreeView,
 };
 
+/// The outcome of a close op: the surface ids whose engines were torn down (so the frontend
+/// disposes exactly those terminals), and whether the close re-seeded a fresh *model* surface that
+/// now needs an engine. The never-contentless invariant re-seeds when the last pane of a workspace
+/// or the last workspace closes; the caller backs the replacement via `spawn` (which targets the
+/// now-focused seeded surface).
+#[derive(Default)]
+pub struct CloseReport {
+    pub closed: Vec<SurfaceId>,
+    pub reseeded: bool,
+}
+
 /// The single-threaded model plane the socket effects mutate: the workspace manager (sidebar
 /// rows + reported metadata) and the notification coordinator (queue + store + policy). Both are
 /// `!Send`; this type only ever exists on the domain thread. Its methods mirror the domain-facing
@@ -180,19 +191,24 @@ impl Domain {
     }
 
     /// Close a workspace and tear down every engine it held; returns those surface ids so the
-    /// frontend disposes their terminals. Selection moves to a neighbor (never-empty invariant).
-    pub fn close_workspace(&mut self, id: WorkspaceId) -> Vec<SurfaceId> {
+    /// frontend disposes their terminals. Selection moves to a neighbor; closing the *last*
+    /// workspace seeds a replacement (never-empty invariant), flagged `reseeded` so the caller
+    /// backs its model surface with a fresh shell.
+    pub fn close_workspace(&mut self, id: WorkspaceId) -> CloseReport {
         let events = self.workspaces.close_workspace(id);
-        let mut closed = Vec::new();
+        let mut report = CloseReport::default();
         for event in &events {
-            if let WorkspaceEvent::Closed(workspace) = event {
-                for surface in workspace.controller().all_surfaces() {
-                    self.surfaces.dispose_surface(surface);
-                    closed.push(surface);
+            match event {
+                WorkspaceEvent::Closed(workspace) => {
+                    for surface in workspace.controller().all_surfaces() {
+                        self.surfaces.dispose_surface(surface);
+                        report.closed.push(surface);
+                    }
                 }
+                WorkspaceEvent::Created(_) => report.reseeded = true,
             }
         }
-        closed
+        report
     }
 
     /// Select a workspace (its tree becomes the live layout).
@@ -232,28 +248,39 @@ impl Domain {
     /// Close the tab backing `surface`, disposing the engine of every surface the tree removed
     /// (the pane heals / empties per the controller's rules). Also the rollback path when a fresh
     /// split's engine is refused at cap.
-    pub fn close_surface(&mut self, surface: SurfaceId) -> Vec<SurfaceId> {
+    pub fn close_surface(&mut self, surface: SurfaceId) -> CloseReport {
         let events = self
             .workspaces
             .selected_mut()
             .controller_mut()
             .close_tab(surface);
-        let mut closed = Vec::new();
+        let mut report = CloseReport::default();
         for event in &events {
-            if let SplitTreeEvent::SurfaceClosed(id) = event {
-                self.surfaces.dispose_surface(*id);
-                closed.push(*id);
+            match event {
+                SplitTreeEvent::SurfaceClosed(id) => {
+                    self.surfaces.dispose_surface(*id);
+                    report.closed.push(*id);
+                }
+                // Closing the last pane empties the tree — re-seed a fresh pane so the workspace is
+                // never contentless. Its surface has no engine yet; `reseeded` tells the caller to
+                // back the now-focused seeded surface with a shell.
+                SplitTreeEvent::Emptied => {
+                    self.workspaces.selected_mut().controller_mut().seed_root();
+                    report.reseeded = true;
+                }
+                SplitTreeEvent::SurfaceCreated(_) => {}
             }
         }
-        closed
+        report
     }
 
     /// Close the focused pane's selected surface (the `Ctrl+W`/close-button path); returns the
-    /// surface ids whose engines were torn down (so the frontend disposes exactly those terminals).
-    pub fn close_focused(&mut self) -> Vec<SurfaceId> {
+    /// surface ids whose engines were torn down (so the frontend disposes exactly those terminals)
+    /// plus whether the tree was re-seeded (last pane closed → caller backs the fresh surface).
+    pub fn close_focused(&mut self) -> CloseReport {
         match self.workspaces.selected().controller().focused_surface() {
             Some(surface) => self.close_surface(surface),
-            None => Vec::new(),
+            None => CloseReport::default(),
         }
     }
 
@@ -868,14 +895,62 @@ mod tests {
         let id = domain.workspaces.selected_id();
         log.lock().unwrap().clear();
 
-        let closed = domain.close_workspace(id);
+        let report = domain.close_workspace(id);
 
-        assert!(closed.contains(&surface), "reports the freed surface");
+        assert!(
+            report.closed.contains(&surface),
+            "reports the freed surface"
+        );
+        assert!(
+            !report.reseeded,
+            "a neighbor remains — no replacement seeded"
+        );
         assert!(
             log.lock().unwrap().contains(&format!("shutdown:{surface}")),
             "closing the workspace must tear down its engine",
         );
         assert_eq!(1, domain.sidebar_view().len(), "back to one workspace");
+    }
+
+    #[test]
+    fn closing_the_last_pane_reseeds_a_fresh_surface() {
+        let (mut domain, _log) = domain_with_recording_surfaces();
+        let surface = domain.selected_focused_surface().unwrap();
+
+        let report = domain.close_focused();
+
+        assert!(
+            report.closed.contains(&surface),
+            "the closed surface is torn down"
+        );
+        assert!(
+            report.reseeded,
+            "never contentless — a fresh pane is seeded"
+        );
+        assert_eq!(1, domain.tree_view().panes.len(), "tree is not left empty");
+        assert_ne!(
+            surface,
+            domain.selected_focused_surface().unwrap(),
+            "the seeded surface is a fresh id needing an engine",
+        );
+    }
+
+    #[test]
+    fn closing_the_last_workspace_reseeds_a_replacement() {
+        let (mut domain, _log) = domain_with_recording_surfaces();
+        let id = domain.workspaces.selected_id();
+
+        let report = domain.close_workspace(id);
+
+        assert!(
+            report.reseeded,
+            "the only workspace is replaced, not removed"
+        );
+        assert_eq!(
+            1,
+            domain.sidebar_view().len(),
+            "a replacement workspace exists"
+        );
     }
 
     #[test]
