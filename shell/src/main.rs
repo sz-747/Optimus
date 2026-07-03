@@ -11,8 +11,9 @@ use tauri::Manager;
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
 use optimus_shell::domain::capacity::{CapacityModel, CapacityProvider};
-use optimus_shell::domain::ids::SurfaceId;
+use optimus_shell::domain::ids::{BranchId, PaneId, SurfaceId};
 use optimus_shell::domain::notifications::{NotificationId, TerminalNotification};
+use optimus_shell::domain::split_tree::{Direction, Orientation};
 use optimus_shell::domain::surface_manager::{Surface, SurfaceFactory};
 use optimus_shell::host::DomainHost;
 use optimus_shell::ipc::access::{self, AuthState};
@@ -21,6 +22,7 @@ use optimus_shell::ipc::naming;
 use optimus_shell::ipc::password::PasswordStore;
 use optimus_shell::ipc::pipe_server::{DispatchFn, PipeServer, PipeServerConfig};
 use optimus_shell::ipc::router::{self, SocketEffects};
+use optimus_shell::view::TreeView;
 
 /// The live engine-backed [`Surface`]: owns one [`Engine`] behind a `Mutex<Option<_>>`. The
 /// `Option` lets [`shutdown`](Surface::shutdown) drop the engine exactly once (idempotent — R2);
@@ -158,7 +160,13 @@ impl EngineSurfaceFactory {
         self.pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(id, StagedSink { on_output, on_event });
+            .insert(
+                id,
+                StagedSink {
+                    on_output,
+                    on_event,
+                },
+            );
     }
 
     /// Drop a staged sink whose creation never happened (refused at cap, or a dead domain thread).
@@ -315,6 +323,213 @@ fn dev_resize(
     Ok(())
 }
 
+// ---- P4.2 split-tree command surface -----------------------------------------------------------
+// The frontend drives structural ops (spawn/split/new-tab/close/focus/zoom/divider) through these
+// and re-renders from the [`TreeView`] each returns — the tree only changes on these calls, so no
+// separate event bus is needed. Spawn/split/new-tab additionally stage a per-surface `Channel`
+// (like `dev_spawn_shell`) and back the new model pane with an engine through the capacity gate.
+
+/// The reply to a spawn/split/new-tab: the id the frontend echoes back for input/resize, plus the
+/// fresh layout to render the newly-created pane into.
+#[derive(serde::Serialize)]
+struct SpawnResult {
+    surface_id: i32,
+    tree: TreeView,
+}
+
+/// Split direction → the controller's (orientation, insert-first) pair. Vertical = side-by-side.
+fn parse_split(direction: &str) -> Result<(Orientation, bool), String> {
+    Ok(match direction {
+        "right" => (Orientation::Vertical, false),
+        "left" => (Orientation::Vertical, true),
+        "down" => (Orientation::Horizontal, false),
+        "up" => (Orientation::Horizontal, true),
+        other => return Err(format!("unknown split direction: {other}")),
+    })
+}
+
+/// Focus-move direction string → [`Direction`].
+fn parse_direction(direction: &str) -> Result<Direction, String> {
+    Ok(match direction {
+        "left" => Direction::Left,
+        "right" => Direction::Right,
+        "up" => Direction::Up,
+        "down" => Direction::Down,
+        other => return Err(format!("unknown direction: {other}")),
+    })
+}
+
+/// Back a freshly-allocated model surface with an engine through the capacity gate. On refusal (or
+/// a dead domain thread) it unstages the sink and closes the ghost pane so the tree never keeps a
+/// pane with no terminal. Returns the created id + the fresh layout on success.
+fn back_surface(
+    factory: &EngineSurfaceFactory,
+    host: &DomainHost,
+    surface: SurfaceId,
+) -> Result<SpawnResult, String> {
+    // Option<_> so `query` has a Default if the domain thread is gone (None → the error arm).
+    let outcome: Option<Result<i32, String>> = host.query(move |d| {
+        Some(match d.try_create_surface(surface, None, None) {
+            Ok(Some(id)) => Ok(id.0),
+            Ok(None) => Err("safe-zone full — close a pane to spawn more".to_string()),
+            Err(e) => Err(e.to_string()),
+        })
+    });
+
+    match outcome {
+        Some(Ok(id)) => {
+            let tree = host.query(|d| d.tree_view());
+            Ok(SpawnResult {
+                surface_id: id,
+                tree,
+            })
+        }
+        Some(Err(msg)) => {
+            factory.unstage(surface);
+            host.run(move |d| d.close_surface(surface)); // roll back the ghost pane
+            Err(msg)
+        }
+        None => {
+            factory.unstage(surface);
+            Err("domain thread unavailable".to_string())
+        }
+    }
+}
+
+/// Back the selected workspace's seeded focused pane with a live shell (the boot path). Returns the
+/// surface id + the initial layout.
+#[tauri::command]
+fn spawn(
+    factory: tauri::State<'_, Arc<EngineSurfaceFactory>>,
+    host: tauri::State<'_, DomainHost>,
+    on_output: Channel<Vec<u8>>,
+    on_event: Channel<String>,
+) -> Result<SpawnResult, String> {
+    let surface = host
+        .query(|d| d.selected_focused_surface())
+        .ok_or("no focused surface to back")?;
+    factory.stage(surface, on_output, on_event);
+    back_surface(&factory, &host, surface)
+}
+
+/// Split the focused pane in `direction`, spawning a shell in the new pane.
+#[tauri::command]
+fn split(
+    factory: tauri::State<'_, Arc<EngineSurfaceFactory>>,
+    host: tauri::State<'_, DomainHost>,
+    direction: String,
+    on_output: Channel<Vec<u8>>,
+    on_event: Channel<String>,
+) -> Result<SpawnResult, String> {
+    let (orientation, insert_first) = parse_split(&direction)?;
+    let surface = host
+        .query(move |d| d.split_focused(orientation, insert_first))
+        .ok_or("no pane to split")?;
+    factory.stage(surface, on_output, on_event);
+    back_surface(&factory, &host, surface)
+}
+
+/// Add a tab (new shell) to the focused pane.
+#[tauri::command]
+fn new_tab(
+    factory: tauri::State<'_, Arc<EngineSurfaceFactory>>,
+    host: tauri::State<'_, DomainHost>,
+    on_output: Channel<Vec<u8>>,
+    on_event: Channel<String>,
+) -> Result<SpawnResult, String> {
+    let surface = host
+        .query(|d| d.new_tab_focused())
+        .ok_or("no pane for a new tab")?;
+    factory.stage(surface, on_output, on_event);
+    back_surface(&factory, &host, surface)
+}
+
+#[tauri::command]
+fn tree_view(host: tauri::State<'_, DomainHost>) -> TreeView {
+    host.query(|d| d.tree_view())
+}
+
+#[tauri::command]
+fn close_surface(host: tauri::State<'_, DomainHost>, id: i32) -> TreeView {
+    host.query(move |d| {
+        d.close_surface(SurfaceId(id));
+        d.tree_view()
+    })
+}
+
+#[tauri::command]
+fn close_focused(host: tauri::State<'_, DomainHost>) -> TreeView {
+    host.query(|d| {
+        d.close_focused();
+        d.tree_view()
+    })
+}
+
+#[tauri::command]
+fn focus_pane(host: tauri::State<'_, DomainHost>, pane: i32) -> TreeView {
+    host.query(move |d| {
+        d.focus_pane(PaneId(pane));
+        d.tree_view()
+    })
+}
+
+#[tauri::command]
+fn move_focus(host: tauri::State<'_, DomainHost>, direction: String) -> Result<TreeView, String> {
+    let dir = parse_direction(&direction)?;
+    Ok(host.query(move |d| {
+        d.move_focus(dir);
+        d.tree_view()
+    }))
+}
+
+#[tauri::command]
+fn select_tab(host: tauri::State<'_, DomainHost>, pane: i32, surface: i32) -> TreeView {
+    host.query(move |d| {
+        d.select_tab(PaneId(pane), SurfaceId(surface));
+        d.tree_view()
+    })
+}
+
+#[tauri::command]
+fn select_next_tab(host: tauri::State<'_, DomainHost>) -> TreeView {
+    host.query(|d| {
+        d.select_next_tab();
+        d.tree_view()
+    })
+}
+
+#[tauri::command]
+fn select_previous_tab(host: tauri::State<'_, DomainHost>) -> TreeView {
+    host.query(|d| {
+        d.select_previous_tab();
+        d.tree_view()
+    })
+}
+
+#[tauri::command]
+fn toggle_zoom(host: tauri::State<'_, DomainHost>) -> TreeView {
+    host.query(|d| {
+        d.toggle_zoom();
+        d.tree_view()
+    })
+}
+
+#[tauri::command]
+fn set_divider(host: tauri::State<'_, DomainHost>, branch: i32, fraction: f64) -> TreeView {
+    host.query(move |d| {
+        d.set_divider(BranchId(branch), fraction);
+        d.tree_view()
+    })
+}
+
+#[tauri::command]
+fn equalize(host: tauri::State<'_, DomainHost>) -> TreeView {
+    host.query(|d| {
+        d.equalize();
+        d.tree_view()
+    })
+}
+
 /// App-side implementation of the socket command surface. Auth is live (DPAPI/env password store);
 /// every domain verb marshals to the [`DomainHost`] thread, which owns the real workspace +
 /// notification model — the port of C# `PipeServerEffects` routing to `WorkspaceHost`.
@@ -391,7 +606,8 @@ impl SocketEffects for PipeEffects {
         self.host.run(move |d| d.notification_dismiss(id));
     }
     fn notification_dismiss_for_surface(&self, surface: SurfaceId) {
-        self.host.run(move |d| d.notification_dismiss_for_surface(surface));
+        self.host
+            .run(move |d| d.notification_dismiss_for_surface(surface));
     }
     fn notification_dismiss_all_read(&self) {
         self.host.run(|d| d.notification_dismiss_all_read());
@@ -403,7 +619,8 @@ impl SocketEffects for PipeEffects {
         self.host.run(move |d| d.notification_mark_read(id));
     }
     fn notification_mark_read_for_surface(&self, surface: SurfaceId) {
-        self.host.run(move |d| d.notification_mark_read_for_surface(surface));
+        self.host
+            .run(move |d| d.notification_mark_read_for_surface(surface));
     }
     fn notification_mark_all_read(&self) {
         self.host.run(|d| d.notification_mark_all_read());
@@ -429,7 +646,8 @@ impl SocketEffects for PipeEffects {
 
     fn report_git_branch(&self, surface: SurfaceId, branch: &str, is_dirty: bool) {
         let branch = branch.to_string();
-        self.host.run(move |d| d.report_git_branch(surface, &branch, is_dirty));
+        self.host
+            .run(move |d| d.report_git_branch(surface, &branch, is_dirty));
     }
     fn report_pr(
         &self,
@@ -446,8 +664,16 @@ impl SocketEffects for PipeEffects {
             status.to_string(),
             branch.map(str::to_string),
         );
-        self.host
-            .run(move |d| d.report_pr(surface, &number, &label, &status, branch.as_deref(), is_stale));
+        self.host.run(move |d| {
+            d.report_pr(
+                surface,
+                &number,
+                &label,
+                &status,
+                branch.as_deref(),
+                is_stale,
+            )
+        });
     }
     fn report_pwd(&self, surface: SurfaceId, path: &str) {
         let path = path.to_string();
@@ -479,7 +705,11 @@ fn start_pipe_server(host: DomainHost) -> PipeServer {
     };
     let mode = access::parse_mode(std::env::var(access::CONTROL_MODE_ENV).ok().as_deref());
     PipeServer::start(
-        PipeServerConfig { pipe_name, control_mode: mode, max_clients: 16 },
+        PipeServerConfig {
+            pipe_name,
+            control_mode: mode,
+            max_clients: 16,
+        },
         build_dispatch(mode, host),
     )
 }
@@ -492,7 +722,10 @@ fn build_dispatch(mode: access::SocketControlMode, host: DomainHost) -> Dispatch
     // threading is deferred (the shared closure holds no per-connection state), so Password mode
     // currently blocks commands rather than tracking a login — secure default.
     let auth = if access::requires_password_auth(mode) {
-        AuthState { requires_authentication: true, is_authenticated: false }
+        AuthState {
+            requires_authentication: true,
+            is_authenticated: false,
+        }
     } else {
         AuthState::UNPROTECTED
     };
@@ -538,7 +771,21 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             dev_spawn_shell,
             dev_send_text,
-            dev_resize
+            dev_resize,
+            spawn,
+            split,
+            new_tab,
+            tree_view,
+            close_surface,
+            close_focused,
+            focus_pane,
+            move_focus,
+            select_tab,
+            select_next_tab,
+            select_previous_tab,
+            toggle_zoom,
+            set_divider,
+            equalize
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Optimus shell");
@@ -555,7 +802,8 @@ mod tests {
     #[test]
     fn app_dispatch_answers_capabilities() {
         let dispatch = build_dispatch(access::SocketControlMode::OptimusOnly, DomainHost::spawn());
-        let response = dispatch(r#"{"id":"1","method":"system.capabilities"}"#).expect("a response");
+        let response =
+            dispatch(r#"{"id":"1","method":"system.capabilities"}"#).expect("a response");
         let root: Value = serde_json::from_str(&response).expect("valid json");
         assert_eq!(root["ok"], true, "server rejected capabilities: {response}");
         assert_eq!(root["result"]["capabilities"], "v1,v2");
@@ -584,7 +832,11 @@ mod tests {
         let notifications = root["result"]["notifications"]
             .as_array()
             .expect("notifications array");
-        assert_eq!(1, notifications.len(), "expected one recorded notification: {listed}");
+        assert_eq!(
+            1,
+            notifications.len(),
+            "expected one recorded notification: {listed}"
+        );
         assert_eq!(notifications[0]["title"], "build");
     }
 

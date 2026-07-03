@@ -14,14 +14,16 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::domain::capacity::CapacityModel;
-use crate::domain::ids::SurfaceId;
+use crate::domain::ids::{BranchId, SurfaceId};
 use crate::domain::notifications::{
     NotificationCoordinator, NotificationId, SurfaceNotification, TerminalNotification,
 };
+use crate::domain::split_tree::{Direction, Orientation, SplitTreeEvent};
 use crate::domain::surface_manager::{
     CreateSurfaceError, NoSurfaceFactory, SurfaceFactory, SurfaceManager,
 };
 use crate::domain::workspace::WorkspaceManager;
+use crate::view::{build_tree_view, TreeView};
 
 /// The single-threaded model plane the socket effects mutate: the workspace manager (sidebar
 /// rows + reported metadata) and the notification coordinator (queue + store + policy). Both are
@@ -129,6 +131,126 @@ impl Domain {
     /// Tear down the live surface for `id`, freeing its safe-zone slot. No-op for unknown ids.
     pub fn dispose_surface(&mut self, id: SurfaceId) {
         self.surfaces.dispose_surface(id);
+    }
+
+    // ---- Split-tree verbs (drive the selected workspace's controller) --------------------------
+
+    /// Flatten the selected workspace's split tree into the serializable [`TreeView`] the frontend
+    /// renders (pane rects + divider handles + focus/zoom). Every mutating verb below pairs with
+    /// this in one domain job so the frontend gets the fresh layout back from each call.
+    pub fn tree_view(&self) -> TreeView {
+        build_tree_view(&self.workspaces.selected().controller().snapshot())
+    }
+
+    /// Split the focused pane, returning the new pane's surface id (a *model* surface with no
+    /// engine yet — the caller stages a channel and calls [`try_create_surface`](Self::try_create_surface)
+    /// to back it, rolling the split back via [`close_surface`](Self::close_surface) if refused at
+    /// cap). `None` when there is no tree/pane to split.
+    pub fn split_focused(
+        &mut self,
+        orientation: Orientation,
+        insert_first: bool,
+    ) -> Option<SurfaceId> {
+        let pane = self.workspaces.selected().controller().focused_pane();
+        let events =
+            self.workspaces
+                .selected_mut()
+                .controller_mut()
+                .split(pane, orientation, insert_first);
+        first_created(&events)
+    }
+
+    /// Add a tab (new surface) to the focused pane, same backer contract as [`split_focused`].
+    pub fn new_tab_focused(&mut self) -> Option<SurfaceId> {
+        let pane = self.workspaces.selected().controller().focused_pane();
+        let events = self
+            .workspaces
+            .selected_mut()
+            .controller_mut()
+            .new_tab(pane);
+        first_created(&events)
+    }
+
+    /// Close the tab backing `surface`, disposing the engine of every surface the tree removed
+    /// (the pane heals / empties per the controller's rules). Also the rollback path when a fresh
+    /// split's engine is refused at cap.
+    pub fn close_surface(&mut self, surface: SurfaceId) {
+        let events = self
+            .workspaces
+            .selected_mut()
+            .controller_mut()
+            .close_tab(surface);
+        for event in &events {
+            if let SplitTreeEvent::SurfaceClosed(closed) = event {
+                self.surfaces.dispose_surface(*closed);
+            }
+        }
+    }
+
+    /// Close the focused pane's selected surface (the `Ctrl+W`/close-button path).
+    pub fn close_focused(&mut self) {
+        if let Some(surface) = self.workspaces.selected().controller().focused_surface() {
+            self.close_surface(surface);
+        }
+    }
+
+    /// Move focus to the nearest pane in `direction` (no-op if none lies that way).
+    pub fn move_focus(&mut self, direction: Direction) {
+        self.workspaces
+            .selected_mut()
+            .controller_mut()
+            .move_focus(direction);
+    }
+
+    /// Focus a pane explicitly (pointer click).
+    pub fn focus_pane(&mut self, pane: crate::domain::ids::PaneId) {
+        self.workspaces
+            .selected_mut()
+            .controller_mut()
+            .focus_pane(pane);
+    }
+
+    /// Select `surface` as the visible tab within `pane`.
+    pub fn select_tab(&mut self, pane: crate::domain::ids::PaneId, surface: SurfaceId) {
+        self.workspaces
+            .selected_mut()
+            .controller_mut()
+            .select_tab(pane, surface);
+    }
+
+    pub fn select_next_tab(&mut self) {
+        self.workspaces
+            .selected_mut()
+            .controller_mut()
+            .select_next_tab();
+    }
+
+    pub fn select_previous_tab(&mut self) {
+        self.workspaces
+            .selected_mut()
+            .controller_mut()
+            .select_previous_tab();
+    }
+
+    /// Toggle full-bleed zoom of the focused pane.
+    pub fn toggle_zoom(&mut self) {
+        self.workspaces
+            .selected_mut()
+            .controller_mut()
+            .toggle_zoom();
+    }
+
+    /// Set a branch divider fraction (clamped [0,1] controller-side) — the splitter-drag path.
+    pub fn set_divider(&mut self, branch: BranchId, fraction: f64) {
+        self.workspaces
+            .selected_mut()
+            .controller_mut()
+            .set_divider_position(branch, fraction);
+    }
+
+    /// Reset every divider to 0.5.
+    pub fn equalize(&mut self) {
+        self.workspaces.selected_mut().controller_mut().equalize();
     }
 
     // ---- Notification verbs --------------------------------------------------------------------
@@ -272,6 +394,15 @@ impl Domain {
     pub fn report_pwd(&mut self, surface: SurfaceId, path: &str) {
         self.workspaces.report_pwd(surface, path);
     }
+}
+
+/// The surface id a structural op created, if any — extracted from the controller's event list so
+/// the host knows which new pane needs an engine backer.
+fn first_created(events: &[SplitTreeEvent]) -> Option<SurfaceId> {
+    events.iter().find_map(|event| match event {
+        SplitTreeEvent::SurfaceCreated(surface) => Some(*surface),
+        _ => None,
+    })
 }
 
 /// Parse a surface id from `S<n>` or a bare integer (mirrors the router's `parse_surface_id`).
@@ -509,7 +640,10 @@ mod tests {
         domain.send_key(surface, 13, 4); // VK_RETURN + a modifier bit
 
         let log = log.lock().unwrap();
-        assert!(log.contains(&format!("text:{surface}:echo hi\r")), "{log:?}");
+        assert!(
+            log.contains(&format!("text:{surface}:echo hi\r")),
+            "{log:?}"
+        );
         assert!(log.contains(&format!("key:{surface}:13:4")), "{log:?}");
     }
 
@@ -517,7 +651,10 @@ mod tests {
     fn focus_surface_selects_the_workspace_and_focuses_the_live_surface() {
         let (mut domain, log) = domain_with_recording_surfaces();
         let surface = domain.selected_focused_surface().unwrap();
-        domain.try_create_surface(surface, None, None).unwrap().unwrap();
+        domain
+            .try_create_surface(surface, None, None)
+            .unwrap()
+            .unwrap();
 
         domain.focus_surface(surface);
 
@@ -540,7 +677,10 @@ mod tests {
     fn disposed_surface_stops_receiving_input() {
         let (mut domain, log) = domain_with_recording_surfaces();
         let surface = domain.selected_focused_surface().unwrap();
-        domain.try_create_surface(surface, None, None).unwrap().unwrap();
+        domain
+            .try_create_surface(surface, None, None)
+            .unwrap()
+            .unwrap();
         domain.dispose_surface(surface);
         log.lock().unwrap().clear(); // drop the shutdown entry
 
@@ -553,6 +693,79 @@ mod tests {
         let mut domain = Domain::new();
         let surface = domain.selected_focused_surface().unwrap();
         assert!(domain.try_create_surface(surface, None, None).is_err());
+    }
+
+    // ---- Split-tree verbs (structural ops drive the selected workspace's controller) -----------
+
+    #[test]
+    fn split_focused_adds_a_pane_and_the_view_shows_two_panes_and_a_divider() {
+        let (mut domain, _log) = domain_with_recording_surfaces();
+        assert_eq!(1, domain.tree_view().panes.len());
+
+        let new_surface = domain
+            .split_focused(Orientation::Vertical, false)
+            .expect("a new surface for the split pane");
+        domain
+            .try_create_surface(new_surface, None, None)
+            .unwrap()
+            .unwrap();
+
+        let view = domain.tree_view();
+        assert_eq!(2, view.panes.len(), "split should yield two panes");
+        assert_eq!(1, view.dividers.len(), "one branch → one divider");
+        // The new pane is focused (controller R4) and holds the new surface.
+        let focused = view.panes.iter().find(|p| p.focused).unwrap();
+        assert!(focused.tabs.contains(&new_surface.0));
+    }
+
+    #[test]
+    fn close_surface_heals_back_to_one_pane_and_disposes_the_engine() {
+        let (mut domain, log) = domain_with_recording_surfaces();
+        let new_surface = domain.split_focused(Orientation::Vertical, false).unwrap();
+        domain
+            .try_create_surface(new_surface, None, None)
+            .unwrap()
+            .unwrap();
+        log.lock().unwrap().clear();
+
+        domain.close_surface(new_surface);
+
+        assert_eq!(
+            1,
+            domain.tree_view().panes.len(),
+            "tree heals to a single pane"
+        );
+        assert_eq!(0, domain.tree_view().dividers.len());
+        assert!(
+            log.lock()
+                .unwrap()
+                .contains(&format!("shutdown:{new_surface}")),
+            "closing the pane must tear down its engine",
+        );
+    }
+
+    #[test]
+    fn new_tab_focused_adds_a_tab_to_the_pane_without_splitting() {
+        let (mut domain, _log) = domain_with_recording_surfaces();
+        let tab_surface = domain.new_tab_focused().expect("a new tab surface");
+
+        let view = domain.tree_view();
+        assert_eq!(1, view.panes.len(), "a new tab does not add a pane");
+        assert!(view.panes[0].tabs.contains(&tab_surface.0));
+        assert_eq!(tab_surface.0, view.panes[0].selected, "new tab is selected");
+    }
+
+    #[test]
+    fn toggle_zoom_marks_the_focused_pane_zoomed_in_the_view() {
+        let (mut domain, _log) = domain_with_recording_surfaces();
+        assert_eq!(None, domain.tree_view().zoomed_pane);
+
+        domain.toggle_zoom();
+        let view = domain.tree_view();
+        assert_eq!(Some(view.focused_pane), view.zoomed_pane);
+
+        domain.toggle_zoom();
+        assert_eq!(None, domain.tree_view().zoomed_pane);
     }
 
     // ---- DomainHost (the thread + channel marshalling) -----------------------------------------
