@@ -34,19 +34,9 @@ export function createTerminal() {
   term.loadAddon(fit);
   term.open(el);
 
-  // WebGL renderer, DOM fallback on context loss (plan C8). ponytail: attached to every pane for
-  // now; the pane-visibility manager (next P4 unit) detaches it from off-screen panes to stay under
-  // WebView2's ~16 live-context cap.
-  let webgl = null;
-  try {
-    webgl = new WebglAddon();
-    webgl.onContextLoss(() => webgl.dispose());
-    term.loadAddon(webgl);
-  } catch (e) {
-    console.warn("WebGL renderer unavailable, using DOM renderer:", e);
-  }
-
-  const entry = { el, term, fit, webgl, surfaceId: null };
+  // WebGL is NOT attached here — the pane-visibility manager (attachWebgl/detachWebgl, driven by
+  // render()) attaches it only to on-screen panes so we stay under WebView2's ~16 live-context cap.
+  const entry = { el, term, fit, webgl: null, surfaceId: null };
 
   const onOutput = new Channel();
   onOutput.onmessage = (bytes) => term.write(new Uint8Array(bytes)); // xterm decodes UTF-8 itself
@@ -72,6 +62,36 @@ export function pushResize(entry) {
     cols: entry.term.cols,
     rows: entry.term.rows,
   }).catch((e) => console.error("resize failed:", e));
+}
+
+// Pane-visibility manager (plan §6 item 1): a WebGL renderer is a governed scarce resource —
+// WebView2 hard-caps live contexts at ~16 and silently evicts the oldest, blanking panes. So the
+// renderer follows the pane on/off screen; the xterm buffer (scrollback) is independent of the
+// renderer, so detach/reattach never loses history.
+
+// Attach the WebGL renderer to an on-screen pane (idempotent). Falls back to the DOM renderer if
+// the context can't be created or is later lost.
+export function attachWebgl(entry) {
+  if (entry.webgl) return;
+  try {
+    const addon = new WebglAddon();
+    addon.onContextLoss(() => {
+      addon.dispose();
+      entry.webgl = null;
+    });
+    entry.term.loadAddon(addon);
+    entry.webgl = addon;
+  } catch (e) {
+    console.warn("WebGL attach failed, using DOM renderer:", e);
+  }
+}
+
+// Release an off-screen pane's WebGL context back to the budget; xterm reverts to the DOM renderer
+// and keeps its buffer. Idempotent.
+export function detachWebgl(entry) {
+  if (!entry.webgl) return;
+  entry.webgl.dispose();
+  entry.webgl = null;
 }
 
 export function disposeTerminal(entry) {

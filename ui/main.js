@@ -2,11 +2,15 @@
 // drives structural ops (spawn/split/close/focus/zoom/tab/divider) through the Tauri command surface
 // and re-renders from each call's returned TreeView. Terminals are keyed by surface id and moved on
 // relayout, never recreated, so a split preserves scrollback + selection.
-import { createTerminal, pushResize, disposeTerminal } from "./terminal.js";
+import { createTerminal, pushResize, disposeTerminal, attachWebgl, detachWebgl } from "./terminal.js";
 import { initCapacity, refreshCapacity } from "./capacity.js";
 
 const { invoke } = window.__TAURI__.core;
 const app = document.getElementById("app");
+
+// WebView2 hard-caps live WebGL contexts at ~16; stay comfortably under (plan §6 item 1). Visible
+// panes claim a renderer up to this budget; the rest (and all background tabs) use the DOM renderer.
+const MAX_RENDERERS = 12;
 
 // surfaceId -> terminal entry (from terminal.js). The single source of live terminals.
 const terms = new Map();
@@ -30,6 +34,7 @@ function render(view) {
   const full = { x: 0, y: 0, width: 1, height: 1 };
 
   const visible = new Set();
+  let renderers = 0; // WebGL contexts claimed this pass, capped at MAX_RENDERERS
   for (const pane of panes) {
     const entry = terms.get(pane.selected);
     if (!entry) continue; // terminal not spawned yet (transient during a split round-trip)
@@ -38,12 +43,20 @@ function render(view) {
     entry.el.style.display = "";
     placeEl(entry.el, zoomed !== null ? full : pane.rect);
     entry.el.classList.toggle("focused", pane.focused);
+    // On-screen panes claim a WebGL renderer up to the budget; the overflow uses DOM.
+    if (renderers < MAX_RENDERERS) {
+      attachWebgl(entry);
+      renderers++;
+    } else {
+      detachWebgl(entry);
+    }
     entry.fit.fit();
     pushResize(entry);
   }
 
   // Every surface still in the tree (across all tabs). Terminals for surfaces no longer present
-  // were closed → dispose them; live-but-not-visible ones (background tabs) just hide.
+  // were closed → dispose them; live-but-not-visible ones (background tabs) hide and release their
+  // renderer back to the budget (their buffer stays; the backend keeps accumulating PTY bytes).
   const alive = new Set(view.panes.flatMap((p) => p.tabs));
   for (const [sid, entry] of terms) {
     if (!alive.has(sid)) {
@@ -51,6 +64,7 @@ function render(view) {
       terms.delete(sid);
     } else if (!visible.has(sid)) {
       entry.el.style.display = "none";
+      detachWebgl(entry);
     }
   }
 
