@@ -15,6 +15,7 @@ use optimus_shell::domain::ids::{BranchId, PaneId, SurfaceId};
 use optimus_shell::domain::notifications::{NotificationId, TerminalNotification};
 use optimus_shell::domain::split_tree::{Direction, Orientation};
 use optimus_shell::domain::surface_manager::{Surface, SurfaceFactory};
+use optimus_shell::domain::workspace::WorkspaceId;
 use optimus_shell::host::DomainHost;
 use optimus_shell::ipc::access::{self, AuthState};
 use optimus_shell::ipc::dpapi::Win32SecretProtector;
@@ -22,7 +23,7 @@ use optimus_shell::ipc::naming;
 use optimus_shell::ipc::password::PasswordStore;
 use optimus_shell::ipc::pipe_server::{DispatchFn, PipeServer, PipeServerConfig};
 use optimus_shell::ipc::router::{self, SocketEffects};
-use optimus_shell::view::{CapacityView, TreeView};
+use optimus_shell::view::{CapacityView, SidebarRowView, TreeView};
 
 /// The live engine-backed [`Surface`]: owns one [`Engine`] behind a `Mutex<Option<_>>`. The
 /// `Option` lets [`shutdown`](Surface::shutdown) drop the engine exactly once (idempotent — R2);
@@ -337,6 +338,14 @@ struct SpawnResult {
     tree: TreeView,
 }
 
+/// A close op's result: the surface ids whose engines were torn down (so the frontend disposes
+/// exactly those terminals) plus the fresh layout.
+#[derive(serde::Serialize, Default)]
+struct CloseResult {
+    closed: Vec<i32>,
+    tree: TreeView,
+}
+
 /// Split direction → the controller's (orientation, insert-first) pair. Vertical = side-by-side.
 fn parse_split(direction: &str) -> Result<(Orientation, bool), String> {
     Ok(match direction {
@@ -386,7 +395,9 @@ fn back_surface(
         }
         Some(Err(msg)) => {
             factory.unstage(surface);
-            host.run(move |d| d.close_surface(surface)); // roll back the ghost pane
+            host.run(move |d| {
+                d.close_surface(surface); // roll back the ghost pane
+            });
             Err(msg)
         }
         None => {
@@ -456,19 +467,71 @@ fn capacity_state(host: tauri::State<'_, DomainHost>) -> CapacityView {
     host.query(|d| d.capacity_view())
 }
 
+/// The sidebar row projection (workspace identity + git/PR/status).
 #[tauri::command]
-fn close_surface(host: tauri::State<'_, DomainHost>, id: i32) -> TreeView {
+fn sidebar_state(host: tauri::State<'_, DomainHost>) -> Vec<SidebarRowView> {
+    host.query(|d| d.sidebar_view())
+}
+
+/// Create a new workspace and back its seeded pane with a shell (same capacity-gated path as spawn).
+#[tauri::command]
+fn new_workspace(
+    factory: tauri::State<'_, Arc<EngineSurfaceFactory>>,
+    host: tauri::State<'_, DomainHost>,
+    on_output: Channel<Vec<u8>>,
+    on_event: Channel<String>,
+) -> Result<SpawnResult, String> {
+    let surface = host
+        .query(|d| d.new_workspace())
+        .ok_or("could not create a workspace")?;
+    factory.stage(surface, on_output, on_event);
+    back_surface(&factory, &host, surface)
+}
+
+/// Close a workspace, tearing down its engines; returns the freed surface ids + the new layout.
+#[tauri::command]
+fn close_workspace(host: tauri::State<'_, DomainHost>, id: i32) -> CloseResult {
     host.query(move |d| {
-        d.close_surface(SurfaceId(id));
+        let closed = d
+            .close_workspace(WorkspaceId(id))
+            .iter()
+            .map(|s| s.0)
+            .collect();
+        CloseResult {
+            closed,
+            tree: d.tree_view(),
+        }
+    })
+}
+
+/// Select a workspace (its tree becomes the live layout).
+#[tauri::command]
+fn select_workspace(host: tauri::State<'_, DomainHost>, id: i32) -> TreeView {
+    host.query(move |d| {
+        d.select_workspace(WorkspaceId(id));
         d.tree_view()
     })
 }
 
 #[tauri::command]
-fn close_focused(host: tauri::State<'_, DomainHost>) -> TreeView {
+fn close_surface(host: tauri::State<'_, DomainHost>, id: i32) -> CloseResult {
+    host.query(move |d| {
+        let closed = d.close_surface(SurfaceId(id)).iter().map(|s| s.0).collect();
+        CloseResult {
+            closed,
+            tree: d.tree_view(),
+        }
+    })
+}
+
+#[tauri::command]
+fn close_focused(host: tauri::State<'_, DomainHost>) -> CloseResult {
     host.query(|d| {
-        d.close_focused();
-        d.tree_view()
+        let closed = d.close_focused().iter().map(|s| s.0).collect();
+        CloseResult {
+            closed,
+            tree: d.tree_view(),
+        }
     })
 }
 
@@ -784,6 +847,10 @@ fn main() {
             new_tab,
             tree_view,
             capacity_state,
+            sidebar_state,
+            new_workspace,
+            close_workspace,
+            select_workspace,
             close_surface,
             close_focused,
             focus_pane,

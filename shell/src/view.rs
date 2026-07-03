@@ -8,7 +8,9 @@ use serde::Serialize;
 
 use crate::domain::capacity::{CapacityIndicatorViewModel, CapacityLevel, CapacityState};
 use crate::domain::layout::{compute_leaf_rects, LayoutRect};
+use crate::domain::projections::project_sidebar;
 use crate::domain::split_tree::{Orientation, SplitNode, TreeSnapshot};
+use crate::domain::workspace::WorkspaceManager;
 
 /// A normalized rectangle in [0,1] space; the frontend scales it to the viewport with percentages.
 #[derive(Serialize, Clone, Copy, PartialEq, Debug)]
@@ -160,6 +162,47 @@ pub fn build_capacity_view(state: Option<CapacityState>) -> CapacityView {
         at_cap,
         hint: at_cap.then_some(CapacityIndicatorViewModel::CAP_HINT),
     }
+}
+
+/// One sidebar row: a workspace's identity + live git/PR/status projection. A flat, serde-friendly
+/// mirror of the ported [`project_sidebar`] [`SidebarRow`](crate::domain::projections::SidebarRow)
+/// (which carries `!Serialize` domain ids); this is the wire shape the chrome renders.
+#[derive(Serialize, Clone, PartialEq, Debug, Default)]
+pub struct SidebarRowView {
+    pub id: i32,
+    pub title: String,
+    pub is_selected: bool,
+    pub git_branch: Option<String>,
+    pub git_dirty: bool,
+    pub pr_badge: Option<String>,
+    pub pr_status: Option<String>,
+    pub cwd: Option<String>,
+    pub status: Option<String>,
+    pub progress: Option<String>,
+    pub latest_text: Option<String>,
+    pub unread_count: i32,
+}
+
+/// Project every workspace into a sidebar row. Notification feeds (`unread`/`latest`) are left at
+/// their defaults for now — the per-workspace coordinator wiring lands with the toasts unit.
+pub fn build_sidebar(manager: &WorkspaceManager) -> Vec<SidebarRowView> {
+    project_sidebar(manager, None, None)
+        .into_iter()
+        .map(|r| SidebarRowView {
+            id: r.id.0,
+            title: r.title,
+            is_selected: r.is_selected,
+            git_branch: r.git_branch,
+            git_dirty: r.git_dirty,
+            pr_badge: r.pr_badge,
+            pr_status: r.pr_status,
+            cwd: r.cwd,
+            status: r.status,
+            progress: r.progress,
+            latest_text: r.latest_text,
+            unread_count: r.unread_count,
+        })
+        .collect()
 }
 
 /// Walk the tree recording one [`DividerView`] per branch, splitting `rect` exactly as

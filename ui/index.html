@@ -6,11 +6,51 @@
   <title>Optimus</title>
   <link rel="stylesheet" href="./tokens.css" />
   <style>
-    /* App = terminals area + an always-visible capacity status bar (CLAUDE.md thesis). */
-    body { display: flex; flex-direction: column; }
+    /* Shell layout: workspace sidebar | (terminals area + always-visible capacity bar). */
+    body { display: flex; flex-direction: row; }
+    #workarea { display: flex; flex-direction: column; flex: 1; min-width: 0; }
     /* Split-tree surface (P4.2): panes absolutely positioned by their normalized rects; keyed
        by surface id and moved (never recreated) on relayout so scrollback survives a split. */
     #app { position: relative; flex: 1; min-height: 0; background: var(--surface-0); overflow: hidden; }
+
+    /* Workspace sidebar (DESIGN.md thesis chrome). */
+    #sidebar {
+      flex-shrink: 0; width: 220px; display: flex; flex-direction: column;
+      background: var(--surface-1); border-right: 1px solid var(--hairline); overflow-y: auto;
+    }
+    .sb-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--sm) var(--md); border-bottom: 1px solid var(--hairline);
+    }
+    .sb-heading { font-size: var(--fs-meta); letter-spacing: 0.05em; color: var(--text-muted); text-transform: uppercase; }
+    .sb-new, .sb-close {
+      border: none; background: transparent; color: var(--text-muted);
+      cursor: pointer; font-size: var(--fs-body); line-height: 1; padding: 0 var(--2xs);
+    }
+    .sb-new:hover, .sb-close:hover { color: var(--text-primary); }
+    .sb-list { display: flex; flex-direction: column; }
+    .sb-row {
+      position: relative; display: flex; align-items: center; gap: var(--sm);
+      padding: var(--sm) var(--md); border-left: 3px solid var(--id);
+      cursor: pointer; transition: background var(--t-micro) var(--ease-out);
+    }
+    .sb-row:hover { background: var(--surface-2); }
+    .sb-row.selected { background: var(--surface-selected); }
+    .sb-main { flex: 1; min-width: 0; }
+    .sb-name { font-size: var(--fs-body); color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sb-meta { display: flex; flex-wrap: wrap; gap: var(--2xs); margin-top: 2px; font-size: var(--fs-caption); }
+    .sb-git { color: var(--git-branch); }
+    .sb-git.dirty::after { content: "●"; color: var(--git-dirty); margin-left: 2px; }
+    .sb-pr { color: var(--pr-open); }
+    .sb-pr.merged { color: var(--pr-merged); }
+    .sb-pr.closed { color: var(--pr-closed); }
+    .sb-status { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sb-unread {
+      min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; text-align: center;
+      background: var(--unread); color: var(--text-on-accent); font-size: var(--fs-caption); line-height: 16px;
+    }
+    .sb-close { opacity: 0; }
+    .sb-row:hover .sb-close { opacity: 1; }
     .pane {
       position: absolute;
       overflow: hidden;
@@ -49,14 +89,17 @@
   </style>
 </head>
 <body>
-  <div id="app"></div>
-  <footer id="statusbar">
-    <div id="cap-meter" class="cap level-calm">
-      <span class="pips"></span>
-      <span class="cap-label">— / — terminals</span>
-    </div>
-    <span id="safe-zone" class="chip level-calm">SAFE ZONE</span>
-  </footer>
+  <nav id="sidebar"></nav>
+  <div id="workarea">
+    <div id="app"></div>
+    <footer id="statusbar">
+      <div id="cap-meter" class="cap level-calm">
+        <span class="pips"></span>
+        <span class="cap-label">— / — terminals</span>
+      </div>
+      <span id="safe-zone" class="chip level-calm">SAFE ZONE</span>
+    </footer>
+  </div>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

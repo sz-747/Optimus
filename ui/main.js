@@ -4,6 +4,7 @@
 // relayout, never recreated, so a split preserves scrollback + selection.
 import { createTerminal, pushResize, disposeTerminal, attachWebgl, detachWebgl } from "./terminal.js";
 import { initCapacity, refreshCapacity } from "./capacity.js";
+import { initSidebar, renderSidebar } from "./sidebar.js";
 
 const { invoke } = window.__TAURI__.core;
 const app = document.getElementById("app");
@@ -12,7 +13,8 @@ const app = document.getElementById("app");
 // panes claim a renderer up to this budget; the rest (and all background tabs) use the DOM renderer.
 const MAX_RENDERERS = 12;
 
-// surfaceId -> terminal entry (from terminal.js). The single source of live terminals.
+// surfaceId -> terminal entry (from terminal.js). The single source of live terminals — spans ALL
+// workspaces (a terminal persists when you switch away, so switching back keeps its scrollback).
 const terms = new Map();
 // Divider handle elements, rebuilt each render (cheap DOM, no terminal state).
 let dividerEls = [];
@@ -54,15 +56,11 @@ function render(view) {
     pushResize(entry);
   }
 
-  // Every surface still in the tree (across all tabs). Terminals for surfaces no longer present
-  // were closed → dispose them; live-but-not-visible ones (background tabs) hide and release their
-  // renderer back to the budget (their buffer stays; the backend keeps accumulating PTY bytes).
-  const alive = new Set(view.panes.flatMap((p) => p.tabs));
+  // Hide every terminal not shown this pass — background tabs AND other workspaces' terminals —
+  // and release their renderer back to the budget. Disposal is NOT done here: a surface missing
+  // from this workspace's tree may still be live in another workspace. Closes dispose explicitly.
   for (const [sid, entry] of terms) {
-    if (!alive.has(sid)) {
-      disposeTerminal(entry);
-      terms.delete(sid);
-    } else if (!visible.has(sid)) {
+    if (!visible.has(sid)) {
       entry.el.style.display = "none";
       detachWebgl(entry);
     }
@@ -72,6 +70,18 @@ function render(view) {
 
   const focusedPane = view.panes.find((p) => p.pane_id === view.focused_pane);
   if (focusedPane) terms.get(focusedPane.selected)?.term.focus();
+}
+
+// Dispose the terminals for surfaces the backend just closed (gone from the returned tree and not
+// resurfaced elsewhere). `closed` is the surface ids the close op reported freeing.
+function reap(closed) {
+  for (const sid of closed) {
+    const entry = terms.get(sid);
+    if (entry) {
+      disposeTerminal(entry);
+      terms.delete(sid);
+    }
+  }
 }
 
 function renderDividers(view, zoomed) {
@@ -159,11 +169,13 @@ async function spawnInto(command, args = {}) {
 const doSplit = (direction) => spawnInto("split", { direction });
 const doNewTab = () => spawnInto("new_tab");
 const refreshFrom = (command, args) => invoke(command, args).then(render).catch(console.error);
-// Close frees a slot — re-render and refresh the meter.
+const refreshSidebar = () => invoke("sidebar_state").then(renderSidebar).catch(console.error);
+// Close frees a slot — re-render, dispose exactly the terminals the backend freed, refresh meters.
 const doClose = () =>
   invoke("close_focused")
-    .then((tree) => {
+    .then(({ closed, tree }) => {
       render(tree);
+      reap(closed);
       refreshCapacity();
     })
     .catch(console.error);
@@ -207,7 +219,29 @@ function onKeydown(e) {
 document.addEventListener("keydown", onKeydown, true); // capture: intercept before xterm sees it
 window.addEventListener("resize", () => invoke("tree_view").then(render).catch(console.error));
 
+initSidebar({
+  onSelect: (id) =>
+    invoke("select_workspace", { id })
+      .then(render)
+      .then(refreshSidebar)
+      .catch(console.error),
+  onNew: async () => {
+    await spawnInto("new_workspace"); // seeds + backs a pane in the new workspace, then renders it
+    refreshSidebar();
+  },
+  onClose: (id) =>
+    invoke("close_workspace", { id })
+      .then(({ closed, tree }) => {
+        render(tree);
+        reap(closed);
+        refreshCapacity();
+        refreshSidebar();
+      })
+      .catch(console.error),
+});
+
 initCapacity();
+refreshSidebar();
 spawnInto("spawn").catch((e) => {
   const banner = document.createElement("pre");
   banner.textContent = `boot failed: ${e}`;

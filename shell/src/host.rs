@@ -22,8 +22,10 @@ use crate::domain::split_tree::{Direction, Orientation, SplitTreeEvent};
 use crate::domain::surface_manager::{
     CreateSurfaceError, NoSurfaceFactory, SurfaceFactory, SurfaceManager,
 };
-use crate::domain::workspace::WorkspaceManager;
-use crate::view::{build_capacity_view, build_tree_view, CapacityView, TreeView};
+use crate::domain::workspace::{WorkspaceEvent, WorkspaceId, WorkspaceManager};
+use crate::view::{
+    build_capacity_view, build_sidebar, build_tree_view, CapacityView, SidebarRowView, TreeView,
+};
 
 /// The single-threaded model plane the socket effects mutate: the workspace manager (sidebar
 /// rows + reported metadata) and the notification coordinator (queue + store + policy). Both are
@@ -151,6 +153,41 @@ impl Domain {
         build_capacity_view(self.capacity.as_ref().map(|c| c.state()))
     }
 
+    // ---- Workspace verbs (the sidebar) ---------------------------------------------------------
+
+    /// Project the workspace list into sidebar rows (identity + git/PR/status).
+    pub fn sidebar_view(&self) -> Vec<SidebarRowView> {
+        build_sidebar(&self.workspaces)
+    }
+
+    /// Create a new workspace, select it, and return its seeded focused surface (a *model* surface
+    /// with no engine — the caller backs it through the capacity gate, same contract as a split).
+    pub fn new_workspace(&mut self) -> Option<SurfaceId> {
+        let id = self.workspaces.new_workspace(); // new_workspace() already selects it
+        self.workspaces.find(id)?.controller().focused_surface()
+    }
+
+    /// Close a workspace and tear down every engine it held; returns those surface ids so the
+    /// frontend disposes their terminals. Selection moves to a neighbor (never-empty invariant).
+    pub fn close_workspace(&mut self, id: WorkspaceId) -> Vec<SurfaceId> {
+        let events = self.workspaces.close_workspace(id);
+        let mut closed = Vec::new();
+        for event in &events {
+            if let WorkspaceEvent::Closed(workspace) = event {
+                for surface in workspace.controller().all_surfaces() {
+                    self.surfaces.dispose_surface(surface);
+                    closed.push(surface);
+                }
+            }
+        }
+        closed
+    }
+
+    /// Select a workspace (its tree becomes the live layout).
+    pub fn select_workspace(&mut self, id: WorkspaceId) {
+        self.workspaces.select_workspace(id);
+    }
+
     /// Split the focused pane, returning the new pane's surface id (a *model* surface with no
     /// engine yet — the caller stages a channel and calls [`try_create_surface`](Self::try_create_surface)
     /// to back it, rolling the split back via [`close_surface`](Self::close_surface) if refused at
@@ -183,23 +220,28 @@ impl Domain {
     /// Close the tab backing `surface`, disposing the engine of every surface the tree removed
     /// (the pane heals / empties per the controller's rules). Also the rollback path when a fresh
     /// split's engine is refused at cap.
-    pub fn close_surface(&mut self, surface: SurfaceId) {
+    pub fn close_surface(&mut self, surface: SurfaceId) -> Vec<SurfaceId> {
         let events = self
             .workspaces
             .selected_mut()
             .controller_mut()
             .close_tab(surface);
+        let mut closed = Vec::new();
         for event in &events {
-            if let SplitTreeEvent::SurfaceClosed(closed) = event {
-                self.surfaces.dispose_surface(*closed);
+            if let SplitTreeEvent::SurfaceClosed(id) = event {
+                self.surfaces.dispose_surface(*id);
+                closed.push(*id);
             }
         }
+        closed
     }
 
-    /// Close the focused pane's selected surface (the `Ctrl+W`/close-button path).
-    pub fn close_focused(&mut self) {
-        if let Some(surface) = self.workspaces.selected().controller().focused_surface() {
-            self.close_surface(surface);
+    /// Close the focused pane's selected surface (the `Ctrl+W`/close-button path); returns the
+    /// surface ids whose engines were torn down (so the frontend disposes exactly those terminals).
+    pub fn close_focused(&mut self) -> Vec<SurfaceId> {
+        match self.workspaces.selected().controller().focused_surface() {
+            Some(surface) => self.close_surface(surface),
+            None => Vec::new(),
         }
     }
 
@@ -775,6 +817,47 @@ mod tests {
 
         domain.toggle_zoom();
         assert_eq!(None, domain.tree_view().zoomed_pane);
+    }
+
+    // ---- Workspace verbs (the sidebar) ---------------------------------------------------------
+
+    #[test]
+    fn new_workspace_selects_it_and_the_sidebar_lists_both() {
+        let (mut domain, _log) = domain_with_recording_surfaces();
+        let surface = domain.new_workspace().expect("seeded pane");
+        domain
+            .try_create_surface(surface, None, None)
+            .unwrap()
+            .unwrap();
+
+        let rows = domain.sidebar_view();
+        assert_eq!(2, rows.len(), "original + the new workspace");
+        assert_eq!(
+            1,
+            rows.iter().filter(|r| r.is_selected).count(),
+            "exactly one selected, and it is the new one",
+        );
+    }
+
+    #[test]
+    fn close_workspace_tears_down_its_engines_and_returns_the_surfaces() {
+        let (mut domain, log) = domain_with_recording_surfaces();
+        let surface = domain.new_workspace().expect("seeded pane");
+        domain
+            .try_create_surface(surface, None, None)
+            .unwrap()
+            .unwrap();
+        let id = domain.workspaces.selected_id();
+        log.lock().unwrap().clear();
+
+        let closed = domain.close_workspace(id);
+
+        assert!(closed.contains(&surface), "reports the freed surface");
+        assert!(
+            log.lock().unwrap().contains(&format!("shutdown:{surface}")),
+            "closing the workspace must tear down its engine",
+        );
+        assert_eq!(1, domain.sidebar_view().len(), "back to one workspace");
     }
 
     // ---- DomainHost (the thread + channel marshalling) -----------------------------------------
