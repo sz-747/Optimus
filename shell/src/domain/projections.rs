@@ -85,7 +85,13 @@ fn status_summary(w: &Workspace) -> Option<String> {
     Some(
         sorted
             .into_iter()
-            .map(|(k, v)| if k.is_empty() { v.clone() } else { format!("{k} {v}") })
+            .map(|(k, v)| {
+                if k.is_empty() {
+                    v.clone()
+                } else {
+                    format!("{k} {v}")
+                }
+            })
             .collect::<Vec<_>>()
             .join(" · "),
     )
@@ -184,7 +190,10 @@ pub struct KeyChord {
 
 impl KeyChord {
     pub fn new(modifiers: ChordModifiers, key_code: i32) -> Self {
-        Self { modifiers, key_code }
+        Self {
+            modifiers,
+            key_code,
+        }
     }
 }
 
@@ -226,25 +235,52 @@ pub fn defaults() -> Vec<(KeyChord, ShortcutAction)> {
     let ctrl = ChordModifiers::CTRL;
     let ctrl_shift = ChordModifiers::CTRL | ChordModifiers::SHIFT;
     vec![
-        (KeyChord::new(ctrl_shift, vkey::LEFT), ShortcutAction::FocusLeft),
-        (KeyChord::new(ctrl_shift, vkey::RIGHT), ShortcutAction::FocusRight),
+        (
+            KeyChord::new(ctrl_shift, vkey::LEFT),
+            ShortcutAction::FocusLeft,
+        ),
+        (
+            KeyChord::new(ctrl_shift, vkey::RIGHT),
+            ShortcutAction::FocusRight,
+        ),
         (KeyChord::new(ctrl_shift, vkey::UP), ShortcutAction::FocusUp),
-        (KeyChord::new(ctrl_shift, vkey::DOWN), ShortcutAction::FocusDown),
+        (
+            KeyChord::new(ctrl_shift, vkey::DOWN),
+            ShortcutAction::FocusDown,
+        ),
         (KeyChord::new(ctrl, vkey::TAB), ShortcutAction::NextTab),
-        (KeyChord::new(ctrl_shift, vkey::TAB), ShortcutAction::PreviousTab),
+        (
+            KeyChord::new(ctrl_shift, vkey::TAB),
+            ShortcutAction::PreviousTab,
+        ),
         (KeyChord::new(ctrl_shift, vkey::T), ShortcutAction::NewTab),
         (KeyChord::new(ctrl_shift, vkey::W), ShortcutAction::CloseTab),
-        (KeyChord::new(ctrl_shift, vkey::D), ShortcutAction::SplitRight),
-        (KeyChord::new(ctrl_shift, vkey::E), ShortcutAction::SplitDown),
-        (KeyChord::new(ctrl_shift, vkey::D0), ShortcutAction::Equalize),
-        (KeyChord::new(ctrl_shift, vkey::Z), ShortcutAction::ToggleZoom),
+        (
+            KeyChord::new(ctrl_shift, vkey::D),
+            ShortcutAction::SplitRight,
+        ),
+        (
+            KeyChord::new(ctrl_shift, vkey::E),
+            ShortcutAction::SplitDown,
+        ),
+        (
+            KeyChord::new(ctrl_shift, vkey::D0),
+            ShortcutAction::Equalize,
+        ),
+        (
+            KeyChord::new(ctrl_shift, vkey::Z),
+            ShortcutAction::ToggleZoom,
+        ),
     ]
 }
 
 /// Resolve a chord to its action, or `None` if unbound.
 pub fn resolve(modifiers: ChordModifiers, key_code: i32) -> Option<ShortcutAction> {
     let chord = KeyChord::new(modifiers, key_code);
-    defaults().into_iter().find(|(k, _)| *k == chord).map(|(_, a)| a)
+    defaults()
+        .into_iter()
+        .find(|(k, _)| *k == chord)
+        .map(|(_, a)| a)
 }
 
 /// Describe the default chord bound to `action` as a display string (e.g. "Ctrl+Shift+D"), sourced
@@ -350,7 +386,14 @@ mod tests {
         let mut m = WorkspaceManager::new();
         let surface = m.selected().controller().all_surfaces()[0];
         m.report_git_branch(surface, "feat/sidebar", true);
-        m.report_pr(surface, "42", "Add sidebar", "open", Some("feat/sidebar"), false);
+        m.report_pr(
+            surface,
+            "42",
+            "Add sidebar",
+            "open",
+            Some("feat/sidebar"),
+            false,
+        );
         m.report_pwd(surface, r"C:\dev\x");
         m.selected_mut().set_progress(Some("3/5"));
         m.selected_mut().set_status("claude:busy");
@@ -389,8 +432,13 @@ mod tests {
         m.new_workspace();
 
         let unread = |id: WorkspaceId| if id == a { 3 } else { 0 };
-        let latest =
-            |id: WorkspaceId| if id == a { Some("Build finished".to_string()) } else { None };
+        let latest = |id: WorkspaceId| {
+            if id == a {
+                Some("Build finished".to_string())
+            } else {
+                None
+            }
+        };
         let rows = project_sidebar(&m, Some(&unread), Some(&latest));
 
         assert_eq!(rows[0].unread_count, 3);
@@ -420,7 +468,10 @@ mod tests {
         let surface = m.selected().controller().all_surfaces()[0];
         m.report_pwd(surface, &format!(r"{home}\dev"));
 
-        assert_eq!(project_sidebar(&m, None, None)[0].cwd.as_deref(), Some(r"~\dev"));
+        assert_eq!(
+            project_sidebar(&m, None, None)[0].cwd.as_deref(),
+            Some(r"~\dev")
+        );
     }
 
     #[test]
@@ -450,14 +501,19 @@ mod tests {
         assert_eq!(headers.len(), 3);
         assert_eq!(headers.iter().filter(|h| h.is_selected).count(), 1);
         assert!(headers.iter().find(|h| h.is_selected).unwrap().id == s(2));
-        assert_eq!(headers.iter().map(|h| h.id).collect::<Vec<_>>(), vec![s(1), s(2), s(3)]);
+        assert_eq!(
+            headers.iter().map(|h| h.id).collect::<Vec<_>>(),
+            vec![s(1), s(2), s(3)]
+        );
     }
 
     #[test]
     fn tabs_use_the_title_provider_when_it_returns_a_value() {
         let tabs = vec![s(1), s(2)];
         let titles: HashMap<SurfaceId, String> =
-            [(s(1), "pwsh".to_string()), (s(2), "vim".to_string())].into_iter().collect();
+            [(s(1), "pwsh".to_string()), (s(2), "vim".to_string())]
+                .into_iter()
+                .collect();
 
         let title_of = |id: SurfaceId| titles.get(&id).cloned();
         let headers = project_tab_headers(&tabs, s(1), Some(&title_of), None);
@@ -542,7 +598,10 @@ mod tests {
 
     #[test]
     fn resolve_distinguishes_tab_cycle_by_shift() {
-        assert_eq!(resolve(ChordModifiers::CTRL, 0x09), Some(ShortcutAction::NextTab));
+        assert_eq!(
+            resolve(ChordModifiers::CTRL, 0x09),
+            Some(ShortcutAction::NextTab)
+        );
         assert_eq!(resolve(CTRL_SHIFT, 0x09), Some(ShortcutAction::PreviousTab));
     }
 
@@ -641,13 +700,19 @@ mod tests {
     #[test]
     fn describe_chord_uses_a_single_modifier_when_the_chord_has_one() {
         assert_eq!(describe_chord(ShortcutAction::NextTab), "Ctrl+Tab");
-        assert_eq!(describe_chord(ShortcutAction::PreviousTab), "Ctrl+Shift+Tab");
+        assert_eq!(
+            describe_chord(ShortcutAction::PreviousTab),
+            "Ctrl+Shift+Tab"
+        );
     }
 
     #[test]
     fn describe_chord_returns_a_nonempty_string_for_every_action() {
         for (_, action) in defaults() {
-            assert!(!describe_chord(action).is_empty(), "no chord text for {action:?}");
+            assert!(
+                !describe_chord(action).is_empty(),
+                "no chord text for {action:?}"
+            );
         }
     }
 

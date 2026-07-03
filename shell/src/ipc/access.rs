@@ -81,8 +81,14 @@ mod tests {
     #[test]
     fn parse_mode_parses_all_modes() {
         assert_eq!(parse_mode(Some("off")), SocketControlMode::Off);
-        assert_eq!(parse_mode(Some("optimus-only")), SocketControlMode::OptimusOnly);
-        assert_eq!(parse_mode(Some("AUTOMATION")), SocketControlMode::Automation);
+        assert_eq!(
+            parse_mode(Some("optimus-only")),
+            SocketControlMode::OptimusOnly
+        );
+        assert_eq!(
+            parse_mode(Some("AUTOMATION")),
+            SocketControlMode::Automation
+        );
         assert_eq!(parse_mode(Some("password")), SocketControlMode::Password);
         assert_eq!(parse_mode(Some("allow-all")), SocketControlMode::AllowAll);
     }

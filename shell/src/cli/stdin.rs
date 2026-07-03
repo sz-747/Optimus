@@ -72,7 +72,9 @@ pub fn read_available<R: Read + Send + 'static>(
     let drain_start = Instant::now();
     while !inner.finished && drain_start.elapsed() < drain_timeout {
         let len_before = inner.buf.len();
-        let (guard, _) = cvar.wait_timeout_while(inner, QUIET_WINDOW, |s| !s.finished).unwrap();
+        let (guard, _) = cvar
+            .wait_timeout_while(inner, QUIET_WINDOW, |s| !s.finished)
+            .unwrap();
         inner = guard;
         if inner.finished || inner.buf.len() == len_before {
             break;
@@ -80,7 +82,11 @@ pub fn read_available<R: Read + Send + 'static>(
     }
 
     // Strip a leading BOM so JSON payloads from BOM-emitting writers still parse.
-    Some(String::from_utf8_lossy(&inner.buf).trim_start_matches('\u{feff}').to_string())
+    Some(
+        String::from_utf8_lossy(&inner.buf)
+            .trim_start_matches('\u{feff}')
+            .to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -99,10 +105,14 @@ mod tests {
 
     impl BlockingReader {
         fn new(initial: &str) -> Self {
-            Self { pending: initial.as_bytes().to_vec() }
+            Self {
+                pending: initial.as_bytes().to_vec(),
+            }
         }
         fn silent() -> Self {
-            Self { pending: Vec::new() }
+            Self {
+                pending: Vec::new(),
+            }
         }
     }
 
@@ -131,7 +141,11 @@ mod tests {
         let start = Instant::now();
         let result = read_available(Cursor::new(Vec::new()), LONG, LONG);
         assert_eq!(result.as_deref(), Some(""));
-        assert!(start.elapsed() < Duration::from_secs(2), "took {:?}", start.elapsed());
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "took {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
@@ -148,14 +162,26 @@ mod tests {
     #[test]
     fn quiet_window_ends_drain_early_instead_of_waiting_full_drain_timeout() {
         let start = Instant::now();
-        let result = read_available(BlockingReader::new("\u{feff}"), LONG, Duration::from_secs(10));
+        let result = read_available(
+            BlockingReader::new("\u{feff}"),
+            LONG,
+            Duration::from_secs(10),
+        );
         assert_eq!(result.as_deref(), Some(""));
-        assert!(start.elapsed() < Duration::from_secs(5), "took {:?}", start.elapsed());
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
     fn strips_leading_bom_from_payload() {
-        let result = read_available(Cursor::new("\u{feff}{\"message\":\"done\"}".as_bytes().to_vec()), LONG, LONG);
+        let result = read_available(
+            Cursor::new("\u{feff}{\"message\":\"done\"}".as_bytes().to_vec()),
+            LONG,
+            LONG,
+        );
         assert_eq!(result.as_deref(), Some(r#"{"message":"done"}"#));
     }
 }

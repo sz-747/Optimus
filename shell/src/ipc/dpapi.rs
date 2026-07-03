@@ -72,7 +72,9 @@ fn crypt(input: &[u8], entropy: Option<&[u8]>, op: Op) -> Option<Vec<u8>> {
         unsafe { std::slice::from_raw_parts(out.pbData as *const u8, out.cbData as usize).to_vec() }
     };
     // SAFETY: `pbData` came from LocalAlloc inside CryptProtect/UnprotectData.
-    unsafe { let _ = LocalFree(Some(HLOCAL(out.pbData as *mut c_void))); }
+    unsafe {
+        let _ = LocalFree(Some(HLOCAL(out.pbData as *mut c_void)));
+    }
     Some(bytes)
 }
 

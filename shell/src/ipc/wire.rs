@@ -255,13 +255,19 @@ mod tests {
         let req = parse_v2(json).unwrap();
         assert_eq!(req.id, "12");
         assert_eq!(req.method, "notify");
-        assert_eq!(req.params.get("title").and_then(Value::as_str), Some("done"));
+        assert_eq!(
+            req.params.get("title").and_then(Value::as_str),
+            Some("done")
+        );
     }
 
     #[test]
     fn serializes_v2_ok_with_newline() {
         let response = serialize_ok("7", json!({"ok": true}));
-        assert_eq!(response, "{\"id\":\"7\",\"ok\":true,\"result\":{\"ok\":true},\"error\":null}\n");
+        assert_eq!(
+            response,
+            "{\"id\":\"7\",\"ok\":true,\"result\":{\"ok\":true},\"error\":null}\n"
+        );
     }
 
     // ---- Parse-boundary hardening (d30009a) — the typed distinction the router relies on. -------
@@ -279,9 +285,18 @@ mod tests {
 
     #[test]
     fn parse_v2_rejects_a_structurally_invalid_request() {
-        assert_eq!(parse_v2(r#"["not","an","object"]"#), Err(ParseError::InvalidRequest));
-        assert_eq!(parse_v2(r#"{"method":"no-id"}"#), Err(ParseError::InvalidRequest));
-        assert_eq!(parse_v2(r#"{"id":42,"method":"nonstring-id"}"#), Err(ParseError::InvalidRequest));
+        assert_eq!(
+            parse_v2(r#"["not","an","object"]"#),
+            Err(ParseError::InvalidRequest)
+        );
+        assert_eq!(
+            parse_v2(r#"{"method":"no-id"}"#),
+            Err(ParseError::InvalidRequest)
+        );
+        assert_eq!(
+            parse_v2(r#"{"id":42,"method":"nonstring-id"}"#),
+            Err(ParseError::InvalidRequest)
+        );
     }
 
     #[test]

@@ -27,7 +27,11 @@ impl RecordingEffects {
     }
     fn single_call(&self) -> String {
         let calls = self.calls.borrow();
-        assert_eq!(calls.len(), 1, "expected exactly one effect call, got {calls:?}");
+        assert_eq!(
+            calls.len(),
+            1,
+            "expected exactly one effect call, got {calls:?}"
+        );
         calls[0].clone()
     }
 }
@@ -50,11 +54,30 @@ impl SocketEffects for RecordingEffects {
     fn send_key(&self, surface: SurfaceId, virtual_key: u32, modifiers: u32) {
         self.push(format!("send_key:{}:{virtual_key}:{modifiers}", surface.0));
     }
-    fn create_notification_for_target(&self, workspace_id: &str, surface: SurfaceId, title: &str, _subtitle: &str, body: &str) {
-        self.push(format!("notify_target:{workspace_id}:{}:{title}:{body}", surface.0));
+    fn create_notification_for_target(
+        &self,
+        workspace_id: &str,
+        surface: SurfaceId,
+        title: &str,
+        _subtitle: &str,
+        body: &str,
+    ) {
+        self.push(format!(
+            "notify_target:{workspace_id}:{}:{title}:{body}",
+            surface.0
+        ));
     }
-    fn create_notification_for_caller(&self, preferred_surface_id: Option<&str>, title: &str, _subtitle: &str, body: &str) {
-        self.push(format!("notify_caller:{}:{title}:{body}", preferred_surface_id.unwrap_or("")));
+    fn create_notification_for_caller(
+        &self,
+        preferred_surface_id: Option<&str>,
+        title: &str,
+        _subtitle: &str,
+        body: &str,
+    ) {
+        self.push(format!(
+            "notify_caller:{}:{title}:{body}",
+            preferred_surface_id.unwrap_or("")
+        ));
     }
     fn notification_list(&self) -> Vec<TerminalNotification> {
         self.push("list".into());
@@ -103,7 +126,15 @@ impl SocketEffects for RecordingEffects {
     fn report_git_branch(&self, surface: SurfaceId, branch: &str, is_dirty: bool) {
         self.push(format!("git:{}:{branch}:{is_dirty}", surface.0));
     }
-    fn report_pr(&self, surface: SurfaceId, number: &str, _label: &str, status: &str, _branch: Option<&str>, _is_stale: bool) {
+    fn report_pr(
+        &self,
+        surface: SurfaceId,
+        number: &str,
+        _label: &str,
+        status: &str,
+        _branch: Option<&str>,
+        _is_stale: bool,
+    ) {
         self.push(format!("pr:{}:{number}:{status}", surface.0));
     }
     fn report_pwd(&self, surface: SurfaceId, path: &str) {
@@ -119,22 +150,34 @@ fn no_env(_: &str) -> Option<String> {
     None
 }
 
-fn run(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>, stdin: Option<&str>) -> (RecordingEffects, String) {
+fn run(
+    args: &[&str],
+    get_env: &dyn Fn(&str) -> Option<String>,
+    stdin: Option<&str>,
+) -> (RecordingEffects, String) {
     let inv = parser::parse(args, get_env, stdin).expect("parse ok");
     assert_eq!(inv.frames.len(), 1, "expected exactly one frame");
     let effects = RecordingEffects::default();
-    let response = router::dispatch(&inv.frames[0], &effects, AuthState::UNPROTECTED).expect("a response");
+    let response =
+        router::dispatch(&inv.frames[0], &effects, AuthState::UNPROTECTED).expect("a response");
     (effects, response)
 }
 
 fn assert_ok(response: &str) {
     let root: Value = serde_json::from_str(response).unwrap();
-    assert_eq!(root["ok"], true, "server rejected the CLI frame: {response}");
+    assert_eq!(
+        root["ok"], true,
+        "server rejected the CLI frame: {response}"
+    );
 }
 
 #[test]
 fn notify_for_caller_reaches_create_for_caller_effect() {
-    let (effects, response) = run(&["notify", "--title", "T", "--body", "B"], &surface("S7"), None);
+    let (effects, response) = run(
+        &["notify", "--title", "T", "--body", "B"],
+        &surface("S7"),
+        None,
+    );
     assert_ok(&response);
     assert_eq!(effects.single_call(), "notify_caller:S7:T:B");
 }
@@ -142,7 +185,17 @@ fn notify_for_caller_reaches_create_for_caller_effect() {
 #[test]
 fn targeted_notify_reaches_create_for_target_effect() {
     let (effects, response) = run(
-        &["notify", "--title", "T", "--body", "B", "--workspace", "ws1", "--surface", "S3"],
+        &[
+            "notify",
+            "--title",
+            "T",
+            "--body",
+            "B",
+            "--workspace",
+            "ws1",
+            "--surface",
+            "S3",
+        ],
         &no_env,
         None,
     );
@@ -166,18 +219,30 @@ fn send_key_reaches_send_key_effect() {
 
 #[test]
 fn report_git_branch_reaches_git_effect() {
-    let (effects, response) = run(&["report_git_branch", "main", "--status=dirty"], &surface("S4"), None);
+    let (effects, response) = run(
+        &["report_git_branch", "main", "--status=dirty"],
+        &surface("S4"),
+        None,
+    );
     assert_ok(&response);
     assert_eq!(effects.single_call(), "git:4:main:true");
 }
 
 #[test]
 fn report_pr_and_pwd_reach_their_effects() {
-    let (pr, pr_response) = run(&["report_pr", "42", "--pr-status", "open", "--surface", "S1"], &no_env, None);
+    let (pr, pr_response) = run(
+        &["report_pr", "42", "--pr-status", "open", "--surface", "S1"],
+        &no_env,
+        None,
+    );
     assert_ok(&pr_response);
     assert_eq!(pr.single_call(), "pr:1:42:open");
 
-    let (pwd, pwd_response) = run(&["report_pwd", r"C:\dev\x", "--surface", "S9"], &no_env, None);
+    let (pwd, pwd_response) = run(
+        &["report_pwd", r"C:\dev\x", "--surface", "S9"],
+        &no_env,
+        None,
+    );
     assert_ok(&pwd_response);
     assert_eq!(pwd.single_call(), r"pwd:9:C:\dev\x");
 }
@@ -226,16 +291,23 @@ fn claude_stop_hook_lands_a_caller_notification() {
         Some(r#"{"message":"Done refactoring"}"#),
     );
     assert_ok(&response);
-    assert_eq!(effects.single_call(), "notify_caller:S5:Claude Code:Done refactoring");
+    assert_eq!(
+        effects.single_call(),
+        "notify_caller:S5:Claude Code:Done refactoring"
+    );
 }
 
 #[test]
 fn auth_login_reaches_authenticate_even_when_auth_required() {
-    let inv = parser::parse(&["auth", "login", "--password", "pw"], &no_env, None).expect("parse ok");
+    let inv =
+        parser::parse(&["auth", "login", "--password", "pw"], &no_env, None).expect("parse ok");
     assert_eq!(inv.frames.len(), 1);
 
     let effects = RecordingEffects::default();
-    let locked = AuthState { requires_authentication: true, is_authenticated: false };
+    let locked = AuthState {
+        requires_authentication: true,
+        is_authenticated: false,
+    };
     let response = router::dispatch(&inv.frames[0], &effects, locked).expect("a response");
 
     assert_ok(&response);

@@ -87,14 +87,22 @@ pub fn dispatch(line: &str, effects: &dyn SocketEffects, auth: AuthState) -> Opt
     if wire::is_v2_frame(line) {
         return match wire::parse_v2(line) {
             Ok(request) => dispatch_v2(&request, effects, auth),
-            Err(_) => Some(wire::serialize_error("0", PARSE_ERROR_CODE, "Invalid V2 request.")),
+            Err(_) => Some(wire::serialize_error(
+                "0",
+                PARSE_ERROR_CODE,
+                "Invalid V2 request.",
+            )),
         };
     }
 
     dispatch_v1(&wire::parse_v1(line), effects, auth)
 }
 
-fn dispatch_v1(command: &V1Command, effects: &dyn SocketEffects, auth: AuthState) -> Option<String> {
+fn dispatch_v1(
+    command: &V1Command,
+    effects: &dyn SocketEffects,
+    auth: AuthState,
+) -> Option<String> {
     if command.verb == methods::EVENTS_STREAM {
         return None;
     }
@@ -132,7 +140,11 @@ fn dispatch_v1(command: &V1Command, effects: &dyn SocketEffects, auth: AuthState
     Some(response)
 }
 
-fn dispatch_v2(request: &V2Request, effects: &dyn SocketEffects, auth: AuthState) -> Option<String> {
+fn dispatch_v2(
+    request: &V2Request,
+    effects: &dyn SocketEffects,
+    auth: AuthState,
+) -> Option<String> {
     if request.method == methods::EVENTS_STREAM {
         return None;
     }
@@ -147,7 +159,9 @@ fn dispatch_v2(request: &V2Request, effects: &dyn SocketEffects, auth: AuthState
 
     let response = match request.method.as_str() {
         methods::SYSTEM_PING => ok(request, json!({ "pong": true })),
-        methods::SYSTEM_CAPABILITIES => ok(request, json!({ "capabilities": effects.capabilities() })),
+        methods::SYSTEM_CAPABILITIES => {
+            ok(request, json!({ "capabilities": effects.capabilities() }))
+        }
         methods::NOTIFY => handle_notify_v2(request, effects),
         methods::CREATE_NOTIFICATION_FOR_CALLER => handle_create_for_caller_v2(request, effects),
         methods::AUTH_LOGIN => handle_auth_login(request, effects),
@@ -193,7 +207,9 @@ fn handle_send_text(args: &str, effects: &dyn SocketEffects) -> String {
 
 fn handle_send_key(args: &str, effects: &dyn SocketEffects) -> String {
     let Some((_, surface, payload)) = parse_workspace_surface_and_remainder(args) else {
-        return wire::serialize_v1_response("ERROR: expected: send-key <surface> <key> [modifiers]");
+        return wire::serialize_v1_response(
+            "ERROR: expected: send-key <surface> <key> [modifiers]",
+        );
     };
     let parts: Vec<&str> = payload.split(' ').filter(|s| !s.is_empty()).collect();
     let Some(key) = parts.first().and_then(|s| s.parse::<u32>().ok()) else {
@@ -382,7 +398,9 @@ fn handle_report_pr(args: &str, effects: &dyn SocketEffects) -> String {
 
 fn handle_report_pwd(args: &str, effects: &dyn SocketEffects) -> String {
     let Some((_, surface, payload)) = parse_workspace_surface_and_remainder(args) else {
-        return wire::serialize_v1_response("ERROR: expected: report_pwd <workspace> <surface> <path>");
+        return wire::serialize_v1_response(
+            "ERROR: expected: report_pwd <workspace> <surface> <path>",
+        );
     };
     effects.report_pwd(surface, &payload);
     wire::serialize_v1_response("OK")
@@ -496,7 +514,11 @@ fn handle_notification_dismiss_v2(request: &V2Request, effects: &dyn SocketEffec
         effects.notification_dismiss_all_read();
         return ok(request, json!({ "ok": true }));
     }
-    err(request, INVALID_PARAMS_CODE, "Missing id, surface_id, or all_read.")
+    err(
+        request,
+        INVALID_PARAMS_CODE,
+        "Missing id, surface_id, or all_read.",
+    )
 }
 
 fn handle_notification_dismiss_for_surface_v2(
@@ -526,7 +548,11 @@ fn handle_notification_mark_read_v2(request: &V2Request, effects: &dyn SocketEff
         effects.notification_mark_all_read();
         return ok(request, json!({ "ok": true }));
     }
-    err(request, INVALID_PARAMS_CODE, "Missing id, surface_id, or all.")
+    err(
+        request,
+        INVALID_PARAMS_CODE,
+        "Missing id, surface_id, or all.",
+    )
 }
 
 fn handle_notification_open_v2(request: &V2Request, effects: &dyn SocketEffects) -> String {
@@ -559,7 +585,14 @@ fn handle_report_pr_v2(request: &V2Request, effects: &dyn SocketEffects) -> Stri
     let status = string_param(&request.params, "status").unwrap_or_default();
     let branch = string_param(&request.params, "branch");
     let is_stale = bool_param(&request.params, "is_stale").unwrap_or(false);
-    effects.report_pr(surface, &number, &label, &status, branch.as_deref(), is_stale);
+    effects.report_pr(
+        surface,
+        &number,
+        &label,
+        &status,
+        branch.as_deref(),
+        is_stale,
+    );
     ok(request, json!({ "ok": true }))
 }
 
@@ -645,7 +678,9 @@ fn is_all_scope(args: &str) -> bool {
 
 /// Parse `[workspace] <surface> <remainder>`: if the first token is a surface, there's no
 /// workspace; otherwise the first token is the workspace and the second must be the surface.
-fn parse_workspace_surface_and_remainder(args: &str) -> Option<(Option<String>, SurfaceId, String)> {
+fn parse_workspace_surface_and_remainder(
+    args: &str,
+) -> Option<(Option<String>, SurfaceId, String)> {
     let trimmed = args.trim();
     if trimmed.is_empty() {
         return None;
@@ -751,7 +786,10 @@ fn bool_param(params: &Value, name: &str) -> Option<bool> {
 fn uint_param(params: &Value, name: &str) -> Option<u32> {
     let raw = params.as_object()?.get(name)?;
     match raw {
-        Value::Number(n) => n.as_u64().filter(|v| *v <= u32::MAX as u64).map(|v| v as u32),
+        Value::Number(n) => n
+            .as_u64()
+            .filter(|v| *v <= u32::MAX as u64)
+            .map(|v| v as u32),
         Value::String(s) => s.trim().parse::<u32>().ok(),
         _ => None,
     }
@@ -949,7 +987,11 @@ mod tests {
     #[test]
     fn mark_read_dispatches_surface_handler() {
         let effects = FakeSocketEffects::default();
-        let response = dispatch("notification.mark_read S2", &effects, AuthState::UNPROTECTED);
+        let response = dispatch(
+            "notification.mark_read S2",
+            &effects,
+            AuthState::UNPROTECTED,
+        );
         assert_eq!(response, Some(wire::serialize_v1_response("OK")));
         assert_eq!(effects.mark_read_surface.get(), Some(SurfaceId(2)));
     }
@@ -957,7 +999,11 @@ mod tests {
     #[test]
     fn mark_read_dispatches_all_handler() {
         let effects = FakeSocketEffects::default();
-        let response = dispatch("notification.mark_read all", &effects, AuthState::UNPROTECTED);
+        let response = dispatch(
+            "notification.mark_read all",
+            &effects,
+            AuthState::UNPROTECTED,
+        );
         assert_eq!(response, Some(wire::serialize_v1_response("OK")));
         assert!(effects.mark_all_read.get());
     }
@@ -965,7 +1011,11 @@ mod tests {
     #[test]
     fn dismiss_dispatches_all_read_handler() {
         let effects = FakeSocketEffects::default();
-        let response = dispatch("notification.dismiss all_read", &effects, AuthState::UNPROTECTED);
+        let response = dispatch(
+            "notification.dismiss all_read",
+            &effects,
+            AuthState::UNPROTECTED,
+        );
         assert_eq!(response, Some(wire::serialize_v1_response("OK")));
         assert!(effects.dismiss_all_read_called.get());
     }
@@ -994,7 +1044,10 @@ mod tests {
         };
 
         let v1 = dispatch("send S1 hello", &effects, locked);
-        assert_eq!(v1, Some(wire::serialize_v1_response("ERROR: auth required")));
+        assert_eq!(
+            v1,
+            Some(wire::serialize_v1_response("ERROR: auth required"))
+        );
 
         let v2 = dispatch(r#"{"id":"4","method":"system.ping"}"#, &effects, locked);
         let doc = parse(&v2);
@@ -1004,7 +1057,12 @@ mod tests {
 
     #[test]
     fn events_stream_dispatch_returns_no_inline_response() {
-        assert!(dispatch("events.stream", &FakeSocketEffects::default(), AuthState::UNPROTECTED).is_none());
+        assert!(dispatch(
+            "events.stream",
+            &FakeSocketEffects::default(),
+            AuthState::UNPROTECTED
+        )
+        .is_none());
         assert!(dispatch(
             r#"{"id":"5","method":"events.stream","params":{}}"#,
             &FakeSocketEffects::default(),
@@ -1162,7 +1220,10 @@ mod tests {
         );
         let doc = parse(&response);
         assert_eq!(doc["ok"], json!(true));
-        assert_eq!(effects.caller_preferred_surface.borrow().as_deref(), Some("S4"));
+        assert_eq!(
+            effects.caller_preferred_surface.borrow().as_deref(),
+            Some("S4")
+        );
         assert_eq!(*effects.caller_title.borrow(), "title");
         assert_eq!(*effects.caller_subtitle.borrow(), "");
         assert_eq!(*effects.caller_body.borrow(), "body");

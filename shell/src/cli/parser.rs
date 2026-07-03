@@ -43,7 +43,10 @@ pub struct CliError {
 
 impl CliError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into(), exit_code: 2 }
+        Self {
+            message: message.into(),
+            exit_code: 2,
+        }
     }
 }
 
@@ -119,7 +122,9 @@ pub fn parse(
         "notify" => parse_notify(&tail, get_env),
         "send" => parse_send(&tail),
         "send-key" | "send_key" => parse_send_key(&tail),
-        "list-notifications" | "notification.list" => Ok(single(v2("notification.list", Map::new()))),
+        "list-notifications" | "notification.list" => {
+            Ok(single(v2("notification.list", Map::new())))
+        }
         "dismiss-notification" | "notification.dismiss" => {
             parse_notification_id_verb(&tail, "notification.dismiss", "all_read", "--all-read")
         }
@@ -140,23 +145,53 @@ pub fn parse(
         "capabilities" => Ok(single(v2("system.capabilities", Map::new()))),
         "auth" => parse_auth(&tail),
         "hooks" => hooks::parse(&tail, get_env, stdin),
-        other => Err(CliError::new(format!("unknown command \"{other}\"\n{}", usage()))),
+        other => Err(CliError::new(format!(
+            "unknown command \"{other}\"\n{}",
+            usage()
+        ))),
     };
 
-    result.map(|inv| CliInvocation { explicit_socket: socket, variant, ..inv })
+    result.map(|inv| CliInvocation {
+        explicit_socket: socket,
+        variant,
+        ..inv
+    })
 }
 
-fn parse_notify(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> Result<CliInvocation, CliError> {
-    let (mut title, mut subtitle, mut body, mut workspace, mut surface) = (None, None, None, None, None);
+fn parse_notify(
+    args: &[&str],
+    get_env: &dyn Fn(&str) -> Option<String>,
+) -> Result<CliInvocation, CliError> {
+    let (mut title, mut subtitle, mut body, mut workspace, mut surface) =
+        (None, None, None, None, None);
     let mut i = 0;
     while i < args.len() {
         match args[i] {
-            "--title" if i + 1 < args.len() => { title = Some(args[i + 1]); i += 1; }
-            "--subtitle" if i + 1 < args.len() => { subtitle = Some(args[i + 1]); i += 1; }
-            "--body" if i + 1 < args.len() => { body = Some(args[i + 1]); i += 1; }
-            "--workspace" if i + 1 < args.len() => { workspace = Some(args[i + 1]); i += 1; }
-            "--surface" | "--window" if i + 1 < args.len() => { surface = Some(args[i + 1]); i += 1; }
-            other => return Err(CliError::new(format!("notify: unexpected argument \"{other}\""))),
+            "--title" if i + 1 < args.len() => {
+                title = Some(args[i + 1]);
+                i += 1;
+            }
+            "--subtitle" if i + 1 < args.len() => {
+                subtitle = Some(args[i + 1]);
+                i += 1;
+            }
+            "--body" if i + 1 < args.len() => {
+                body = Some(args[i + 1]);
+                i += 1;
+            }
+            "--workspace" if i + 1 < args.len() => {
+                workspace = Some(args[i + 1]);
+                i += 1;
+            }
+            "--surface" | "--window" if i + 1 < args.len() => {
+                surface = Some(args[i + 1]);
+                i += 1;
+            }
+            other => {
+                return Err(CliError::new(format!(
+                    "notify: unexpected argument \"{other}\""
+                )))
+            }
         }
         i += 1;
     }
@@ -204,7 +239,11 @@ fn parse_send(args: &[&str]) -> Result<CliInvocation, CliError> {
 fn parse_send_key(args: &[&str]) -> Result<CliInvocation, CliError> {
     let key: u32 = match args.get(1).and_then(|s| s.parse().ok()) {
         Some(k) => k,
-        None => return Err(CliError::new("send-key: expected <surface> <key> [modifiers]")),
+        None => {
+            return Err(CliError::new(
+                "send-key: expected <surface> <key> [modifiers]",
+            ))
+        }
     };
     let modifiers: u32 = match args.get(2) {
         Some(m) => match m.parse() {
@@ -237,13 +276,18 @@ fn parse_notification_id_verb(
         } else if id.is_none() {
             id = Some(args[i]);
         } else {
-            return Err(CliError::new(format!("{method}: unexpected argument \"{}\"", args[i])));
+            return Err(CliError::new(format!(
+                "{method}: unexpected argument \"{}\"",
+                args[i]
+            )));
         }
         i += 1;
     }
 
     if id.is_none() && surface.is_none() && !all {
-        return Err(CliError::new(format!("{method}: expected <id>, --surface <S#>, or {all_flag}")));
+        return Err(CliError::new(format!(
+            "{method}: expected <id>, --surface <S#>, or {all_flag}"
+        )));
     }
 
     let mut p = Map::new();
@@ -266,7 +310,10 @@ fn parse_open_notification(args: &[&str]) -> Result<CliInvocation, CliError> {
     Ok(single(v2("notification.open", p)))
 }
 
-fn parse_report_git_branch(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> Result<CliInvocation, CliError> {
+fn parse_report_git_branch(
+    args: &[&str],
+    get_env: &dyn Fn(&str) -> Option<String>,
+) -> Result<CliInvocation, CliError> {
     let (mut branch, mut status, mut surface) = (None, None, None);
     let mut i = 0;
     while i < args.len() {
@@ -281,15 +328,21 @@ fn parse_report_git_branch(args: &[&str], get_env: &dyn Fn(&str) -> Option<Strin
         } else if branch.is_none() {
             branch = Some(args[i]);
         } else {
-            return Err(CliError::new(format!("report_git_branch: unexpected argument \"{}\"", args[i])));
+            return Err(CliError::new(format!(
+                "report_git_branch: unexpected argument \"{}\"",
+                args[i]
+            )));
         }
         i += 1;
     }
 
     let branch = branch.ok_or_else(|| CliError::new("report_git_branch: expected <branch>"))?;
-    let resolved = try_resolve_surface(surface, get_env)
-        .ok_or_else(|| CliError::new("report_git_branch: no --surface and OPTIMUS_SURFACE_ID is not set"))?;
-    let is_dirty = status.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("dirty"));
+    let resolved = try_resolve_surface(surface, get_env).ok_or_else(|| {
+        CliError::new("report_git_branch: no --surface and OPTIMUS_SURFACE_ID is not set")
+    })?;
+    let is_dirty = status
+        .as_deref()
+        .is_some_and(|s| s.eq_ignore_ascii_case("dirty"));
 
     let mut p = Map::new();
     p.insert("surface_id".into(), json!(resolved));
@@ -298,24 +351,44 @@ fn parse_report_git_branch(args: &[&str], get_env: &dyn Fn(&str) -> Option<Strin
     Ok(single(v2("report_git_branch", p)))
 }
 
-fn parse_report_pr(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> Result<CliInvocation, CliError> {
+fn parse_report_pr(
+    args: &[&str],
+    get_env: &dyn Fn(&str) -> Option<String>,
+) -> Result<CliInvocation, CliError> {
     let (mut number, mut label, mut url, mut status, mut branch, mut surface) =
         (None, None, None, None, None, None);
     let mut stale = false;
     let mut i = 0;
     while i < args.len() {
         match args[i] {
-            "--label" if i + 1 < args.len() => { label = Some(args[i + 1]); i += 1; }
-            "--url" if i + 1 < args.len() => { url = Some(args[i + 1]); i += 1; }
-            "--pr-status" if i + 1 < args.len() => { status = Some(args[i + 1]); i += 1; }
-            "--branch" if i + 1 < args.len() => { branch = Some(args[i + 1]); i += 1; }
-            "--surface" if i + 1 < args.len() => { surface = Some(args[i + 1]); i += 1; }
+            "--label" if i + 1 < args.len() => {
+                label = Some(args[i + 1]);
+                i += 1;
+            }
+            "--url" if i + 1 < args.len() => {
+                url = Some(args[i + 1]);
+                i += 1;
+            }
+            "--pr-status" if i + 1 < args.len() => {
+                status = Some(args[i + 1]);
+                i += 1;
+            }
+            "--branch" if i + 1 < args.len() => {
+                branch = Some(args[i + 1]);
+                i += 1;
+            }
+            "--surface" if i + 1 < args.len() => {
+                surface = Some(args[i + 1]);
+                i += 1;
+            }
             "--stale" => stale = true,
             other => {
                 if number.is_none() {
                     number = Some(other);
                 } else {
-                    return Err(CliError::new(format!("report_pr: unexpected argument \"{other}\"")));
+                    return Err(CliError::new(format!(
+                        "report_pr: unexpected argument \"{other}\""
+                    )));
                 }
             }
         }
@@ -323,8 +396,9 @@ fn parse_report_pr(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> R
     }
 
     let number = number.ok_or_else(|| CliError::new("report_pr: expected <number>"))?;
-    let resolved = try_resolve_surface(surface, get_env)
-        .ok_or_else(|| CliError::new("report_pr: no --surface and OPTIMUS_SURFACE_ID is not set"))?;
+    let resolved = try_resolve_surface(surface, get_env).ok_or_else(|| {
+        CliError::new("report_pr: no --surface and OPTIMUS_SURFACE_ID is not set")
+    })?;
 
     let mut p = Map::new();
     p.insert("surface_id".into(), json!(resolved));
@@ -339,7 +413,10 @@ fn parse_report_pr(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> R
     Ok(single(v2("report_pr", p)))
 }
 
-fn parse_report_pwd(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> Result<CliInvocation, CliError> {
+fn parse_report_pwd(
+    args: &[&str],
+    get_env: &dyn Fn(&str) -> Option<String>,
+) -> Result<CliInvocation, CliError> {
     let (mut path, mut surface) = (None, None);
     let mut i = 0;
     while i < args.len() {
@@ -349,14 +426,18 @@ fn parse_report_pwd(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> 
         } else if path.is_none() {
             path = Some(args[i]);
         } else {
-            return Err(CliError::new(format!("report_pwd: unexpected argument \"{}\"", args[i])));
+            return Err(CliError::new(format!(
+                "report_pwd: unexpected argument \"{}\"",
+                args[i]
+            )));
         }
         i += 1;
     }
 
     let path = path.ok_or_else(|| CliError::new("report_pwd: expected <path>"))?;
-    let resolved = try_resolve_surface(surface, get_env)
-        .ok_or_else(|| CliError::new("report_pwd: no --surface and OPTIMUS_SURFACE_ID is not set"))?;
+    let resolved = try_resolve_surface(surface, get_env).ok_or_else(|| {
+        CliError::new("report_pwd: no --surface and OPTIMUS_SURFACE_ID is not set")
+    })?;
 
     let mut p = Map::new();
     p.insert("surface_id".into(), json!(resolved));
@@ -364,7 +445,11 @@ fn parse_report_pwd(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> 
     Ok(single(v2("report_pwd", p)))
 }
 
-fn parse_single_string(args: &[&str], method: &str, field: &str) -> Result<CliInvocation, CliError> {
+fn parse_single_string(
+    args: &[&str],
+    method: &str,
+    field: &str,
+) -> Result<CliInvocation, CliError> {
     if args.is_empty() {
         return Err(CliError::new(format!("{method}: expected <{field}…>")));
     }
@@ -387,7 +472,8 @@ fn parse_auth(args: &[&str]) -> Result<CliInvocation, CliError> {
             i += 1;
         }
 
-        let password = password.ok_or_else(|| CliError::new("auth login: --password is required"))?;
+        let password =
+            password.ok_or_else(|| CliError::new("auth login: --password is required"))?;
         let mut p = Map::new();
         p.insert("credential".into(), json!(password));
         return Ok(single(v2("auth.login", p)));
@@ -408,7 +494,10 @@ pub(crate) fn try_resolve_surface(
 }
 
 pub(crate) fn single(frame: String) -> CliInvocation {
-    CliInvocation { frames: vec![frame], ..Default::default() }
+    CliInvocation {
+        frames: vec![frame],
+        ..Default::default()
+    }
 }
 
 /// Build one V2 request frame `{"id":"1","method":…,"params":{…}}` (no trailing newline — the pipe
@@ -432,7 +521,12 @@ mod tests {
     }
 
     fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
-        move |key| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_string())
+        move |key| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
     }
 
     fn parse_ok(args: &[&str], get_env: &dyn Fn(&str) -> Option<String>) -> CliInvocation {
@@ -460,7 +554,18 @@ mod tests {
 
     #[test]
     fn notify_with_explicit_surface_routes_to_targeted_notify() {
-        let inv = parse_ok(&["notify", "--title", "T", "--workspace", "ws1", "--surface", "S3"], &no_env);
+        let inv = parse_ok(
+            &[
+                "notify",
+                "--title",
+                "T",
+                "--workspace",
+                "ws1",
+                "--surface",
+                "S3",
+            ],
+            &no_env,
+        );
         let root = single_frame(&inv);
         assert_eq!(root["method"], "notify");
         assert_eq!(root["params"]["surface_id"], "S3");
@@ -492,7 +597,10 @@ mod tests {
 
     #[test]
     fn report_git_branch_uses_env_surface_and_dirty_flag() {
-        let inv = parse_ok(&["report_git_branch", "main", "--status=dirty"], &env(&[(SURFACE_ID_ENV, "S4")]));
+        let inv = parse_ok(
+            &["report_git_branch", "main", "--status=dirty"],
+            &env(&[(SURFACE_ID_ENV, "S4")]),
+        );
         let root = single_frame(&inv);
         assert_eq!(root["method"], "report_git_branch");
         let p = &root["params"];
@@ -509,8 +617,21 @@ mod tests {
     #[test]
     fn report_pr_carries_all_fields() {
         let inv = parse_ok(
-            &["report_pr", "42", "--label", "feat", "--url", "https://x/pr/42", "--pr-status", "open",
-              "--branch", "feat/x", "--stale", "--surface", "S1"],
+            &[
+                "report_pr",
+                "42",
+                "--label",
+                "feat",
+                "--url",
+                "https://x/pr/42",
+                "--pr-status",
+                "open",
+                "--branch",
+                "feat/x",
+                "--stale",
+                "--surface",
+                "S1",
+            ],
             &no_env,
         );
         let p = single_frame(&inv)["params"].clone();
@@ -537,7 +658,10 @@ mod tests {
         let by_id = single_frame(&parse_ok(&["dismiss-notification", "12345"], &no_env));
         assert_eq!(by_id["params"]["id"], "12345");
 
-        let by_surface = single_frame(&parse_ok(&["dismiss-notification", "--surface", "S2"], &no_env));
+        let by_surface = single_frame(&parse_ok(
+            &["dismiss-notification", "--surface", "S2"],
+            &no_env,
+        ));
         assert_eq!(by_surface["params"]["surface_id"], "S2");
 
         let by_scope = single_frame(&parse_ok(&["dismiss-notification", "--all-read"], &no_env));
@@ -553,15 +677,30 @@ mod tests {
 
     #[test]
     fn set_status_joins_remaining_args() {
-        let root = single_frame(&parse_ok(&["set-status", "codex:", "running", "tests"], &no_env));
+        let root = single_frame(&parse_ok(
+            &["set-status", "codex:", "running", "tests"],
+            &no_env,
+        ));
         assert_eq!(root["method"], "set-status");
         assert_eq!(root["params"]["status"], "codex: running tests");
     }
 
     #[test]
     fn global_socket_and_variant_flags_are_extracted() {
-        let inv = parse_ok(&["--socket", r"\\.\pipe\optimus-dev", "--variant", "dev", "ping"], &no_env);
-        assert_eq!(inv.explicit_socket.as_deref(), Some(r"\\.\pipe\optimus-dev"));
+        let inv = parse_ok(
+            &[
+                "--socket",
+                r"\\.\pipe\optimus-dev",
+                "--variant",
+                "dev",
+                "ping",
+            ],
+            &no_env,
+        );
+        assert_eq!(
+            inv.explicit_socket.as_deref(),
+            Some(r"\\.\pipe\optimus-dev")
+        );
         assert_eq!(inv.variant.as_deref(), Some("dev"));
         assert_eq!(single_frame(&inv)["method"], "system.ping");
     }
@@ -581,7 +720,10 @@ mod tests {
 
     #[test]
     fn auth_login_builds_credential_payload() {
-        let root = single_frame(&parse_ok(&["auth", "login", "--password", "hunter2"], &no_env));
+        let root = single_frame(&parse_ok(
+            &["auth", "login", "--password", "hunter2"],
+            &no_env,
+        ));
         assert_eq!(root["method"], "auth.login");
         assert_eq!(root["params"]["credential"], "hunter2");
     }

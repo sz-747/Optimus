@@ -138,7 +138,9 @@ mod tests {
     fn environment_password_takes_precedence_over_file() {
         let called = Rc::new(Cell::new(false));
         let store = PasswordStore::new(
-            Box::new(TrackingSecretProtector { unprotect_called: called.clone() }),
+            Box::new(TrackingSecretProtector {
+                unprotect_called: called.clone(),
+            }),
             Box::new(|_| Some(" env-pass ".to_string())),
             Box::new(|| r"C:\users\app\Local".to_string()),
             Box::new(|_| true),
@@ -154,7 +156,9 @@ mod tests {
         let called = Rc::new(Cell::new(false));
         let expected = "from-file";
         let store = PasswordStore::new(
-            Box::new(TrackingSecretProtector { unprotect_called: called.clone() }),
+            Box::new(TrackingSecretProtector {
+                unprotect_called: called.clone(),
+            }),
             Box::new(|_| None),
             Box::new(|| r"C:\users\app\Local".to_string()),
             Box::new(|path| path == r"C:\users\app\Local\optimus\optimus-socket-password.bin"),
@@ -170,7 +174,9 @@ mod tests {
     fn verify_is_false_when_no_password_is_available() {
         let called = Rc::new(Cell::new(false));
         let store = PasswordStore::new(
-            Box::new(TrackingSecretProtector { unprotect_called: called }),
+            Box::new(TrackingSecretProtector {
+                unprotect_called: called,
+            }),
             Box::new(|_| None),
             Box::new(|| r"C:\users\app\Local".to_string()),
             Box::new(|_| false),
