@@ -24,7 +24,8 @@ use crate::domain::surface_manager::{
 };
 use crate::domain::workspace::{WorkspaceEvent, WorkspaceId, WorkspaceManager};
 use crate::view::{
-    build_capacity_view, build_sidebar, build_tree_view, CapacityView, SidebarRowView, TreeView,
+    build_capacity_view, build_sidebar, build_toasts, build_tree_view, CapacityView,
+    SidebarRowView, ToastView, TreeView,
 };
 
 /// The single-threaded model plane the socket effects mutate: the workspace manager (sidebar
@@ -38,6 +39,10 @@ pub struct Domain {
     /// The RAM safe-zone governor, kept so the frontend can read the always-visible capacity meter
     /// (`None` when the governor failed to start — the meter shows a placeholder).
     capacity: Option<Arc<CapacityModel>>,
+    /// Push sink for surfaced toasts (the frontend's persistent notification channel, installed by
+    /// [`set_toast_sink`](Self::set_toast_sink)). `None` until the frontend subscribes; the closure
+    /// wraps a `Send` Tauri `Channel`, so the lib stays tauri-free. Called on the domain thread.
+    toast_sink: Option<Box<dyn Fn(Vec<ToastView>)>>,
 }
 
 impl Default for Domain {
@@ -71,7 +76,14 @@ impl Domain {
             notifications: NotificationCoordinator::new(),
             surfaces: SurfaceManager::new(factory, capacity.clone()),
             capacity,
+            toast_sink: None,
         }
+    }
+
+    /// Install the frontend's toast push sink (its persistent notification channel). Surfaced
+    /// toasts flow here as notifications are recorded.
+    pub fn set_toast_sink(&mut self, sink: Box<dyn Fn(Vec<ToastView>)>) {
+        self.toast_sink = Some(sink);
     }
 
     /// The selected workspace's focused surface — the seeded model surface at startup, and the
@@ -353,7 +365,13 @@ impl Domain {
             return;
         };
         self.notifications.on_notification(surface, payload, false); // CLI path never coalesces
-        self.notifications.drain(&snapshot, false);
+        let outcome = self.notifications.drain(&snapshot, false);
+        let toasts = build_toasts(&outcome);
+        if !toasts.is_empty() {
+            if let Some(sink) = &self.toast_sink {
+                sink(toasts);
+            }
+        }
     }
 
     pub fn notification_list(&self) -> Vec<TerminalNotification> {
@@ -858,6 +876,27 @@ mod tests {
             "closing the workspace must tear down its engine",
         );
         assert_eq!(1, domain.sidebar_view().len(), "back to one workspace");
+    }
+
+    #[test]
+    fn recording_a_notification_pushes_a_toast_to_the_sink() {
+        let (mut domain, _log) = domain_with_recording_surfaces();
+        let surface = domain.selected_focused_surface().unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_seen = Arc::clone(&seen);
+        domain.set_toast_sink(Box::new(move |toasts| {
+            sink_seen.lock().unwrap().extend(toasts);
+        }));
+
+        domain.create_for_target("", surface, "Build done", "", "exit 0");
+
+        let toasts = seen.lock().unwrap();
+        assert_eq!(
+            1,
+            toasts.len(),
+            "an unfocused-app notification surfaces a toast"
+        );
+        assert_eq!("Build done", toasts[0].title);
     }
 
     // ---- DomainHost (the thread + channel marshalling) -----------------------------------------

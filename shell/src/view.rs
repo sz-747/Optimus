@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::domain::capacity::{CapacityIndicatorViewModel, CapacityLevel, CapacityState};
 use crate::domain::layout::{compute_leaf_rects, LayoutRect};
+use crate::domain::notifications::DrainOutcome;
 use crate::domain::projections::project_sidebar;
 use crate::domain::split_tree::{Orientation, SplitNode, TreeSnapshot};
 use crate::domain::workspace::WorkspaceManager;
@@ -201,6 +202,31 @@ pub fn build_sidebar(manager: &WorkspaceManager) -> Vec<SidebarRowView> {
             progress: r.progress,
             latest_text: r.latest_text,
             unread_count: r.unread_count,
+        })
+        .collect()
+}
+
+/// One in-app toast: the transient card shown when the notification policy surfaces a notification
+/// with `show_toast`. `flash` asks the owning pane to flash (the C# pane-flash cue).
+#[derive(Serialize, Clone, PartialEq, Debug, Default)]
+pub struct ToastView {
+    pub title: String,
+    pub subtitle: String,
+    pub body: String,
+    pub flash: bool,
+}
+
+/// The toasts a [`DrainOutcome`] wants shown — the policy's `show_toast` survivors, in surface order.
+pub fn build_toasts(outcome: &DrainOutcome) -> Vec<ToastView> {
+    outcome
+        .surfaced
+        .iter()
+        .filter(|s| s.show_toast)
+        .map(|s| ToastView {
+            title: s.notification.title.clone(),
+            subtitle: s.notification.subtitle.clone(),
+            body: s.notification.body.clone(),
+            flash: s.flash,
         })
         .collect()
 }

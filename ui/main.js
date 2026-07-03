@@ -6,6 +6,7 @@ import { createTerminal, pushResize, disposeTerminal, attachWebgl, detachWebgl }
 import { initCapacity, refreshCapacity } from "./capacity.js";
 import { initSidebar, renderSidebar } from "./sidebar.js";
 import { initPalette, openPalette, isPaletteOpen } from "./palette.js";
+import { initToasts } from "./toasts.js";
 
 const { invoke } = window.__TAURI__.core;
 const app = document.getElementById("app");
@@ -263,6 +264,7 @@ initPalette([
 ]);
 
 initCapacity();
+initToasts();
 refreshSidebar();
 spawnInto("spawn").catch((e) => {
   const banner = document.createElement("pre");

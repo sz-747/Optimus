@@ -23,7 +23,7 @@ use optimus_shell::ipc::naming;
 use optimus_shell::ipc::password::PasswordStore;
 use optimus_shell::ipc::pipe_server::{DispatchFn, PipeServer, PipeServerConfig};
 use optimus_shell::ipc::router::{self, SocketEffects};
-use optimus_shell::view::{CapacityView, SidebarRowView, TreeView};
+use optimus_shell::view::{CapacityView, SidebarRowView, ToastView, TreeView};
 
 /// The live engine-backed [`Surface`]: owns one [`Engine`] behind a `Mutex<Option<_>>`. The
 /// `Option` lets [`shutdown`](Surface::shutdown) drop the engine exactly once (idempotent — R2);
@@ -473,6 +473,17 @@ fn sidebar_state(host: tauri::State<'_, DomainHost>) -> Vec<SidebarRowView> {
     host.query(|d| d.sidebar_view())
 }
 
+/// Subscribe the frontend's persistent toast channel. Surfaced notifications (policy `show_toast`)
+/// are pushed here as they're recorded on the domain thread — no polling.
+#[tauri::command]
+fn listen_notifications(host: tauri::State<'_, DomainHost>, on_toast: Channel<Vec<ToastView>>) {
+    host.run(move |d| {
+        d.set_toast_sink(Box::new(move |toasts| {
+            let _ = on_toast.send(toasts); // frontend gone → drop; it re-subscribes on reload
+        }));
+    });
+}
+
 /// Create a new workspace and back its seeded pane with a shell (same capacity-gated path as spawn).
 #[tauri::command]
 fn new_workspace(
@@ -848,6 +859,7 @@ fn main() {
             tree_view,
             capacity_state,
             sidebar_state,
+            listen_notifications,
             new_workspace,
             close_workspace,
             select_workspace,

@@ -110,6 +110,21 @@
     }
     .pal-row.active { background: var(--surface-selected); }
     .pal-hint { color: var(--text-muted); font-size: var(--fs-caption); }
+
+    /* Toasts: transient notification cards, bottom-right above the status bar. */
+    #toasts {
+      position: fixed; right: var(--md); bottom: 40px; z-index: 90;
+      display: flex; flex-direction: column; gap: var(--sm); max-width: 320px;
+    }
+    .toast {
+      padding: var(--sm) var(--md); border-radius: 6px; cursor: pointer;
+      background: var(--surface-2); border: 1px solid var(--hairline); border-left: 3px solid var(--attention);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+      animation: toast-in var(--t-short) var(--ease-out);
+    }
+    .toast-title { font-size: var(--fs-body); color: var(--text-primary); }
+    .toast-body { margin-top: 2px; font-size: var(--fs-caption); color: var(--text-muted); }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   </style>
 </head>
 <body>
@@ -124,6 +139,7 @@
       <span id="safe-zone" class="chip level-calm">SAFE ZONE</span>
     </footer>
   </div>
+  <div id="toasts"></div>
   <div id="palette">
     <div class="pal-box">
       <input class="pal-input" type="text" placeholder="Type a command…" autocomplete="off" spellcheck="false" />
