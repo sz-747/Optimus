@@ -2,6 +2,8 @@
 // Debug builds keep the console for logs.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod panic_log;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -818,7 +820,26 @@ fn build_dispatch(mode: access::SocketControlMode, host: DomainHost) -> Dispatch
 }
 
 fn main() {
+    // Install the crash black box first — before any thread exists — so a panic anywhere (domain
+    // thread, pipe client, engine reader) lands in the log file (C4).
+    panic_log::install();
+
     tauri::Builder::default()
+        // Clean shutdown (C1): on window close, stop accepting CLI connections, then tear down
+        // every live shell in order (ClosePseudoConsole→join) rather than leaving it to the
+        // KILL_ON_JOB_CLOSE backstop. `query` blocks until disposal finishes, so the process only
+        // exits once the shells are down.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let app = window.app_handle();
+                if let Some(server) = app.try_state::<PipeServer>() {
+                    server.stop();
+                }
+                if let Some(host) = app.try_state::<DomainHost>() {
+                    host.query(|d| d.dispose_all_surfaces());
+                }
+            }
+        })
         // Pipe name `optimus-stable` collides if two instances run; second
         // launch focuses the first window instead (plan §2 item 2).
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

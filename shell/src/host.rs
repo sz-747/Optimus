@@ -162,6 +162,13 @@ impl Domain {
         self.surfaces.dispose_surface(id);
     }
 
+    /// Tear down every live surface (each engine's ordered ClosePseudoConsole→join) and clear the
+    /// registry. The clean-exit path (C1) calls this on window close so shells shut down in order,
+    /// not just by the `KILL_ON_JOB_CLOSE` backstop.
+    pub fn dispose_all_surfaces(&mut self) {
+        self.surfaces.dispose_all();
+    }
+
     // ---- Split-tree verbs (drive the selected workspace's controller) --------------------------
 
     /// Flatten the selected workspace's split tree into the serializable [`TreeView`] the frontend
@@ -546,7 +553,13 @@ impl DomainHost {
             .spawn(move || {
                 let mut domain = Domain::with_surfaces(factory, capacity);
                 while let Ok(job) = rx.recv() {
-                    job(&mut domain);
+                    // Contain a panicking command on the domain thread (C4): the panic hook has
+                    // already logged it; swallowing the unwind here keeps the thread alive so one
+                    // bad request can't take down every workspace. AssertUnwindSafe: a poisoned-but-
+                    // -alive domain beats a dead one for a terminal the user is mid-session on.
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        job(&mut domain);
+                    }));
                 }
             })
             .expect("spawn optimus-domain thread");
@@ -950,6 +963,19 @@ mod tests {
             1,
             domain.sidebar_view().len(),
             "a replacement workspace exists"
+        );
+    }
+
+    #[test]
+    fn a_panicking_job_does_not_kill_the_domain_thread() {
+        let host = DomainHost::spawn();
+        host.run(|_d| panic!("boom")); // contained by the loop's catch_unwind (C4)
+
+        // A dead domain thread makes `query` return T::default() (0). A live one runs the closure.
+        assert_eq!(
+            7,
+            host.query(|_d| 7_i32),
+            "domain survived the panicking job"
         );
     }
 

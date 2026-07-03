@@ -14,7 +14,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::mem::size_of;
 use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::sync_channel;
+use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -51,6 +51,16 @@ pub struct PipeServerConfig {
 struct SendHandle(HANDLE);
 // SAFETY: exactly one thread ever touches the wrapped handle.
 unsafe impl Send for SendHandle {}
+
+/// Returns a concurrency slot to the accept loop when the client thread ends — on normal return
+/// *or* on unwind. Without this, a panic in the dispatch closure (C4/C5) would skip the return and
+/// permanently leak a slot; enough leaks would starve the server of its `max_clients` capacity.
+struct SlotGuard(SyncSender<()>);
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
 
 /// A running pipe server. Dropping it stops the accept loop and joins the accept thread.
 pub struct PipeServer {
@@ -166,8 +176,9 @@ fn accept_loop(
                 // Bind the whole wrapper so the closure captures `SendHandle` (Send), not the
                 // disjoint `HANDLE` field (which is Copy and !Send).
                 let connection = connection;
+                // Reclaim the slot on drop — survives a panic inside `handle_client`.
+                let _slot = SlotGuard(slot_return);
                 handle_client(connection.0, &client_dispatch);
-                let _ = slot_return.send(());
             });
         if spawned.is_err() {
             // Couldn't spawn a handler; close the connection and reclaim the slot.
@@ -205,7 +216,11 @@ fn build_security_descriptor(sid: Option<&str>) -> Option<PSECURITY_DESCRIPTOR> 
     Some(descriptor)
 }
 
-fn create_instance(name: &[u16], attributes: Option<&SECURITY_ATTRIBUTES>, max: u32) -> Option<HANDLE> {
+fn create_instance(
+    name: &[u16],
+    attributes: Option<&SECURITY_ATTRIBUTES>,
+    max: u32,
+) -> Option<HANDLE> {
     // SAFETY: `name` is null-terminated; `attributes`, when present, outlives the call.
     let handle = unsafe {
         CreateNamedPipeW(
@@ -335,6 +350,59 @@ mod tests {
         // Explicitly drop the client (server-side read hits EOF), then the server.
         drop(reader);
         drop(client);
+        drop(server);
+    }
+
+    /// Connect to a just-started server, retrying while the accept thread creates the first
+    /// instance (or, after a client closes, the next one).
+    fn connect(name: &str) -> File {
+        for _ in 0..50 {
+            if let Ok(f) = OpenOptions::new().read(true).write(true).open(name) {
+                return f;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("could not connect to pipe server");
+    }
+
+    /// A dispatch panic must not leak the connection's concurrency slot (C5/C4). With
+    /// `max_clients = 1`, a leaked slot would wedge the accept loop forever — the second client
+    /// could never be served. The `SlotGuard` returns the slot during unwind, so it is.
+    #[test]
+    fn a_panicking_dispatch_releases_the_slot() {
+        let name = format!(r"\\.\pipe\optimus-test-panic-{}", std::process::id());
+        let dispatch: DispatchFn = Arc::new(|req: &str| {
+            assert_ne!(req, "boom", "dispatch panics on this request");
+            Some(format!("echo:{req}"))
+        });
+        let server = PipeServer::start(
+            PipeServerConfig {
+                pipe_name: name.clone(),
+                control_mode: SocketControlMode::AllowAll,
+                max_clients: 1,
+            },
+            dispatch,
+        );
+
+        // First client trips the panic in its server-side thread, then disconnects.
+        let mut c1 = connect(&name);
+        c1.write_all(b"boom\n").expect("write to first client");
+        c1.flush().ok();
+        drop(c1);
+
+        // Second client is served only if the slot came back.
+        let mut c2 = connect(&name);
+        c2.write_all(b"hello\n").expect("write to second client");
+        c2.flush().ok();
+        let mut reader = BufReader::new(&mut c2);
+        let mut response = String::new();
+        reader
+            .read_line(&mut response)
+            .expect("second client served");
+        assert_eq!(response, "echo:hello\n");
+
+        drop(reader);
+        drop(c2);
         drop(server);
     }
 }
