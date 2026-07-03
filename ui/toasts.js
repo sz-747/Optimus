@@ -31,6 +31,12 @@ function showToast(t) {
   stack.append(el);
 }
 
+// Raise a toast from the frontend (not the backend push channel) — e.g. a safe-zone cap refusal,
+// which has no notification behind it but still needs to tell the user why nothing happened.
+export function notify(title, body) {
+  showToast({ title, subtitle: "", body: body || "" });
+}
+
 export function initToasts() {
   const channel = new Channel();
   channel.onmessage = (toasts) => toasts.forEach(showToast);

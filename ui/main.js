@@ -6,7 +6,7 @@ import { createTerminal, pushResize, disposeTerminal, attachWebgl, detachWebgl }
 import { initCapacity, refreshCapacity } from "./capacity.js";
 import { initSidebar, renderSidebar } from "./sidebar.js";
 import { initPalette, openPalette, isPaletteOpen } from "./palette.js";
-import { initToasts } from "./toasts.js";
+import { initToasts, notify } from "./toasts.js";
 
 const { invoke } = window.__TAURI__.core;
 const app = document.getElementById("app");
@@ -163,8 +163,12 @@ async function spawnInto(command, args = {}) {
     refreshCapacity(); // a spawn consumed a safe-zone slot
   } catch (e) {
     disposeTerminal(entry); // refused at cap (or failed) — drop the orphan terminal
-    refreshCapacity(); // a cap refusal is exactly when the meter should read full
     console.error(`${command} failed:`, e);
+    // A cap refusal is silent otherwise (the split rolls back, nothing appears) — the tiny AT-CAP
+    // chip is easy to miss. Tell the user why. ponytail: one toast per refusal; hammering the key
+    // stacks a few 5s cards, which is fine — they stop once they see it.
+    const cap = await refreshCapacity(); // renders the now-full meter and hands back the view
+    if (cap?.at_cap) notify("Safe-zone cap reached", cap.hint || cap.label);
   }
 }
 

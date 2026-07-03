@@ -27,8 +27,17 @@ export function renderCapacity(view) {
   chip.title = view.hint || "";
 }
 
+// Fetch, paint, and return the view so callers (e.g. a cap-refusal handler) can read at_cap/hint.
 export function refreshCapacity() {
-  return invoke("capacity_state").then(renderCapacity).catch((e) => console.error("capacity:", e));
+  return invoke("capacity_state")
+    .then((view) => {
+      renderCapacity(view);
+      return view;
+    })
+    .catch((e) => {
+      console.error("capacity:", e);
+      return null;
+    });
 }
 
 export function initCapacity() {
