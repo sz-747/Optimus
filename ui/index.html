@@ -6,9 +6,23 @@
   <title>Optimus</title>
   <link rel="stylesheet" href="./tokens.css" />
   <style>
-    /* Single full-window terminal surface (P4.1). Split/sidebar chrome layers on later. */
-    #app { height: 100%; padding: var(--xs); background: var(--surface-0); }
-    #app .xterm { height: 100%; }
+    /* Split-tree surface (P4.2): panes absolutely positioned by their normalized rects; keyed
+       by surface id and moved (never recreated) on relayout so scrollback survives a split. */
+    #app { position: relative; height: 100%; background: var(--surface-0); overflow: hidden; }
+    .pane {
+      position: absolute;
+      overflow: hidden;
+      padding: var(--2xs);
+      border: 1px solid var(--hairline);
+      background: var(--surface-0);
+    }
+    .pane.focused { border-color: var(--attention); }
+    .pane .xterm { height: 100%; }
+    /* Draggable splitters drawn over pane boundaries. */
+    .divider { position: absolute; z-index: 5; background: transparent; }
+    .divider:hover { background: var(--attention); opacity: 0.4; }
+    .divider.vertical { width: 6px; margin-left: -3px; cursor: col-resize; }
+    .divider.horizontal { height: 6px; margin-top: -3px; cursor: row-resize; }
   </style>
 </head>
 <body>

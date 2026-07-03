@@ -1,82 +1,190 @@
-// P4.1: a real xterm.js terminal backed by the engine surface. Replaces the P1 <pre> stub.
-// Backend Channel -> term.write; term.onData -> dev_send_text; fit -> dev_resize.
-// Split view, keyed pane reuse, and the pane-visibility manager layer on in later P4 units.
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
-import "@xterm/xterm/css/xterm.css";
+// P4.2: the split-tree chrome. Renders the backend TreeView as absolutely-positioned, keyed panes;
+// drives structural ops (spawn/split/close/focus/zoom/tab/divider) through the Tauri command surface
+// and re-renders from each call's returned TreeView. Terminals are keyed by surface id and moved on
+// relayout, never recreated, so a split preserves scrollback + selection.
+import { createTerminal, pushResize, disposeTerminal } from "./terminal.js";
 
-const { invoke, Channel } = window.__TAURI__.core;
+const { invoke } = window.__TAURI__.core;
+const app = document.getElementById("app");
 
-// Theme from tokens.css (DESIGN.md graphite). Kept minimal — the full ANSI palette lands with
-// the design pass; these are the surfaces/text/cursor the thesis chrome actually specifies.
-const css = getComputedStyle(document.documentElement);
-const token = (name) => css.getPropertyValue(name).trim();
+// surfaceId -> terminal entry (from terminal.js). The single source of live terminals.
+const terms = new Map();
+// Divider handle elements, rebuilt each render (cheap DOM, no terminal state).
+let dividerEls = [];
 
-const term = new Terminal({
-  fontFamily: token("--mono") || "Consolas, monospace",
-  fontSize: 13,
-  scrollback: 10000, // today's engine default (plan §6 item 1)
-  cursorBlink: true,
-  theme: {
-    background: token("--surface-0"),
-    foreground: token("--text-primary"),
-    cursor: token("--attention"),
-    selectionBackground: token("--surface-selected"),
-  },
-});
+// ---- Rendering ---------------------------------------------------------------------------------
 
-const fit = new FitAddon();
-term.loadAddon(fit);
-term.open(document.getElementById("app"));
-
-// WebGL renderer for perf; falls back to the DOM renderer if the context is unavailable or
-// lost (plan C8 — no wgpu in-process; renderer crashes are Chromium's problem, not ours).
-try {
-  const webgl = new WebglAddon();
-  webgl.onContextLoss(() => webgl.dispose()); // drop back to DOM renderer on GPU context loss
-  term.loadAddon(webgl);
-} catch (e) {
-  console.warn("WebGL renderer unavailable, using DOM renderer:", e);
+function placeEl(el, rect) {
+  el.style.left = `${rect.x * 100}%`;
+  el.style.top = `${rect.y * 100}%`;
+  el.style.width = `${rect.width * 100}%`;
+  el.style.height = `${rect.height * 100}%`;
 }
 
-fit.fit();
-term.focus();
+// Render a TreeView: position each pane's selected terminal, hide off-screen tabs, dispose closed
+// surfaces, and lay out draggable dividers. When a pane is zoomed it fills the viewport alone.
+function render(view) {
+  const zoomed = view.zoomed_pane;
+  const panes = zoomed !== null ? view.panes.filter((p) => p.pane_id === zoomed) : view.panes;
+  const full = { x: 0, y: 0, width: 1, height: 1 };
 
-let surfaceId = null;
+  const visible = new Set();
+  for (const pane of panes) {
+    const entry = terms.get(pane.selected);
+    if (!entry) continue; // terminal not spawned yet (transient during a split round-trip)
+    visible.add(pane.selected);
+    if (!entry.el.isConnected) app.append(entry.el);
+    entry.el.style.display = "";
+    placeEl(entry.el, zoomed !== null ? full : pane.rect);
+    entry.el.classList.toggle("focused", pane.focused);
+    entry.fit.fit();
+    pushResize(entry);
+  }
 
-// Push the current grid size to the backer, but only once a surface exists. cols/rows come
-// from the fit addon's measurement of the actual viewport.
-function pushResize() {
-  if (surfaceId === null) return;
-  invoke("dev_resize", { id: surfaceId, cols: term.cols, rows: term.rows }).catch((e) =>
-    console.error("resize failed:", e),
-  );
+  // Every surface still in the tree (across all tabs). Terminals for surfaces no longer present
+  // were closed → dispose them; live-but-not-visible ones (background tabs) just hide.
+  const alive = new Set(view.panes.flatMap((p) => p.tabs));
+  for (const [sid, entry] of terms) {
+    if (!alive.has(sid)) {
+      disposeTerminal(entry);
+      terms.delete(sid);
+    } else if (!visible.has(sid)) {
+      entry.el.style.display = "none";
+    }
+  }
+
+  renderDividers(view, zoomed);
+
+  const focusedPane = view.panes.find((p) => p.pane_id === view.focused_pane);
+  if (focusedPane) terms.get(focusedPane.selected)?.term.focus();
 }
 
-new ResizeObserver(() => {
-  fit.fit();
-  pushResize();
-}).observe(document.getElementById("app"));
+function renderDividers(view, zoomed) {
+  for (const el of dividerEls) el.remove();
+  dividerEls = [];
+  if (zoomed !== null) return; // a zoomed pane hides its splitters
 
-async function boot() {
-  const onOutput = new Channel();
-  onOutput.onmessage = (bytes) => term.write(new Uint8Array(bytes)); // xterm decodes UTF-8 itself
+  for (const d of view.dividers) {
+    const el = document.createElement("div");
+    el.className = `divider ${d.orientation}`;
+    if (d.orientation === "vertical") {
+      const x = d.rect.x + d.rect.width * d.fraction;
+      el.style.left = `${x * 100}%`;
+      el.style.top = `${d.rect.y * 100}%`;
+      el.style.height = `${d.rect.height * 100}%`;
+    } else {
+      const y = d.rect.y + d.rect.height * d.fraction;
+      el.style.top = `${y * 100}%`;
+      el.style.left = `${d.rect.x * 100}%`;
+      el.style.width = `${d.rect.width * 100}%`;
+    }
+    attachDividerDrag(el, d);
+    app.append(el);
+    dividerEls.push(el);
+  }
+}
 
-  const onEvent = new Channel();
-  onEvent.onmessage = (msg) => console.log("engine event:", msg);
+// ---- Divider drag ------------------------------------------------------------------------------
 
-  surfaceId = await invoke("dev_spawn_shell", { onOutput, onEvent });
-  pushResize(); // size the child PTY to the fitted grid now that it exists
+let dragBusy = false; // one in-flight set_divider at a time; skip intermediate moves to stay smooth
 
-  term.onData((data) => {
-    invoke("dev_send_text", { id: surfaceId, text: data }).catch((e) =>
-      console.error("send failed:", e),
-    );
+function attachDividerDrag(el, divider) {
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+
+    const onMove = (ev) => {
+      if (dragBusy) return;
+      const bounds = app.getBoundingClientRect();
+      const nx = (ev.clientX - bounds.left) / bounds.width;
+      const ny = (ev.clientY - bounds.top) / bounds.height;
+      const fraction =
+        divider.orientation === "vertical"
+          ? (nx - divider.rect.x) / divider.rect.width
+          : (ny - divider.rect.y) / divider.rect.height;
+      dragBusy = true;
+      invoke("set_divider", { branch: divider.branch_id, fraction })
+        .then(render)
+        .catch((err) => console.error("set_divider failed:", err))
+        .finally(() => {
+          dragBusy = false;
+        });
+    };
+    const onUp = (ev) => {
+      el.releasePointerCapture(ev.pointerId);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+    };
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
   });
 }
 
-boot().catch((e) => {
-  term.write(`\r\n\x1b[31mboot failed: ${e}\x1b[0m\r\n`);
+// ---- Structural commands (each spawns/mutates, then re-renders from the returned TreeView) ------
+
+async function spawnInto(command, args = {}) {
+  const entry = createTerminal();
+  try {
+    const { surface_id, tree } = await invoke(command, {
+      ...args,
+      onOutput: entry.channels.onOutput,
+      onEvent: entry.channels.onEvent,
+    });
+    entry.surfaceId = surface_id;
+    terms.set(surface_id, entry);
+    render(tree);
+  } catch (e) {
+    disposeTerminal(entry); // refused at cap (or failed) — drop the orphan terminal
+    console.error(`${command} failed:`, e);
+  }
+}
+
+const doSplit = (direction) => spawnInto("split", { direction });
+const doNewTab = () => spawnInto("new_tab");
+const refreshFrom = (command, args) => invoke(command, args).then(render).catch(console.error);
+
+// ---- Chrome shortcuts (mirror the ported ShortcutMap defaults; all Ctrl(+Shift)) ---------------
+// Reserved chords act on the chrome; everything else falls through to the focused xterm untouched.
+
+function onKeydown(e) {
+  if (!e.ctrlKey) return;
+  const shift = e.shiftKey;
+  const k = e.key;
+
+  const action = (() => {
+    if (k === "Tab") return shift ? () => refreshFrom("select_previous_tab") : () => refreshFrom("select_next_tab");
+    if (!shift) return null;
+    switch (k.toLowerCase()) {
+      case "arrowleft": return () => refreshFrom("move_focus", { direction: "left" });
+      case "arrowright": return () => refreshFrom("move_focus", { direction: "right" });
+      case "arrowup": return () => refreshFrom("move_focus", { direction: "up" });
+      case "arrowdown": return () => refreshFrom("move_focus", { direction: "down" });
+      case "d": return () => doSplit("right");
+      case "e": return () => doSplit("down");
+      case "t": return doNewTab;
+      case "w": return () => refreshFrom("close_focused");
+      case "z": return () => refreshFrom("toggle_zoom");
+      case ")":
+      case "0": return () => refreshFrom("equalize"); // Ctrl+Shift+0 (shifted '0' is ')')
+      default: return null;
+    }
+  })();
+
+  if (action) {
+    e.preventDefault();
+    e.stopPropagation();
+    action();
+  }
+}
+
+// ---- Boot --------------------------------------------------------------------------------------
+
+document.addEventListener("keydown", onKeydown, true); // capture: intercept before xterm sees it
+window.addEventListener("resize", () => invoke("tree_view").then(render).catch(console.error));
+
+spawnInto("spawn").catch((e) => {
+  const banner = document.createElement("pre");
+  banner.textContent = `boot failed: ${e}`;
+  app.append(banner);
   console.error(e);
 });
