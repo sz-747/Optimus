@@ -146,6 +146,12 @@
       <div class="pal-list"></div>
     </div>
   </div>
+  <!-- In a plain browser (npm run dev) there is no Tauri backend; load the stateful mock so the
+       chrome renders and reacts. In the real app window.__TAURI__ exists, so this never fires.
+       @vite-ignore keeps the mock out of the production bundle. -->
+  <script type="module">
+    if (!window.__TAURI__) await import(/* @vite-ignore */ "./mock/tauri-mock.js");
+  </script>
   <script type="module" src="./main.js"></script>
 </body>
 </html>
