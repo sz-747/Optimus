@@ -6,6 +6,7 @@
 
 use serde::Serialize;
 
+use crate::domain::capacity::{CapacityIndicatorViewModel, CapacityLevel, CapacityState};
 use crate::domain::layout::{compute_leaf_rects, LayoutRect};
 use crate::domain::split_tree::{Orientation, SplitNode, TreeSnapshot};
 
@@ -104,6 +105,63 @@ pub fn build_tree_view(snapshot: &TreeSnapshot) -> TreeView {
     }
 }
 
+/// The always-visible capacity indicator (CLAUDE.md thesis): the RAM safe-zone meter the chrome
+/// binds to. Presentation mirrors the ported [`CapacityIndicatorViewModel`] (label/fraction/level)
+/// — that view model is the source of truth; `capacity_view_matches_the_view_model` guards parity.
+#[derive(Serialize, Clone, PartialEq, Debug, Default)]
+pub struct CapacityView {
+    pub used: i32,
+    pub reserved: i32,
+    pub max: i32,
+    /// `"calm" | "warn" | "cap"` → the `--capacity-*` token levels in tokens.css.
+    pub level: &'static str,
+    /// Fill fraction [0,1] on the `used + reserved` basis (the 8-pip meter).
+    pub fraction: f64,
+    /// `"X / Y terminals"` (X = used + reserved).
+    pub label: String,
+    /// At the safe-zone cap — the chrome disables the New-Workspace affordance.
+    pub at_cap: bool,
+    /// Cap hint line, or `None` below the cap.
+    pub hint: Option<&'static str>,
+}
+
+fn level_token(level: CapacityLevel) -> &'static str {
+    match level {
+        CapacityLevel::Calm => "calm",
+        CapacityLevel::Warn => "warn",
+        CapacityLevel::Cap => "cap",
+    }
+}
+
+/// Build the capacity meter DTO from the model's current [`CapacityState`] (`None` = the governor
+/// failed to start; the meter shows an em-dash placeholder, same as the view model).
+pub fn build_capacity_view(state: Option<CapacityState>) -> CapacityView {
+    let Some(s) = state else {
+        return CapacityView {
+            level: "calm",
+            label: "— / — terminals".to_string(),
+            ..Default::default()
+        };
+    };
+    let filled = s.used + s.reserved;
+    let fraction = if s.max > 0 {
+        (f64::from(filled) / f64::from(s.max)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let at_cap = s.level == CapacityLevel::Cap;
+    CapacityView {
+        used: s.used,
+        reserved: s.reserved,
+        max: s.max,
+        level: level_token(s.level),
+        fraction,
+        label: format!("{filled} / {} terminals", s.max),
+        at_cap,
+        hint: at_cap.then_some(CapacityIndicatorViewModel::CAP_HINT),
+    }
+}
+
 /// Walk the tree recording one [`DividerView`] per branch, splitting `rect` exactly as
 /// `layout::compute_leaf_rects` does so the handle lands on the child boundary.
 fn collect_dividers(node: &SplitNode, rect: LayoutRect, out: &mut Vec<DividerView>) {
@@ -159,6 +217,36 @@ mod tests {
             zoomed_pane: zoomed.map(PaneId),
             version: 7,
         }
+    }
+
+    // ---- Capacity meter --------------------------------------------------------------------
+
+    #[test]
+    fn capacity_view_formats_label_fraction_and_level() {
+        let state = CapacityState::new(3, 1, 8, CapacityLevel::Warn);
+        let view = build_capacity_view(Some(state));
+        assert_eq!("4 / 8 terminals", view.label); // used + reserved
+        assert_eq!(0.5, view.fraction);
+        assert_eq!("warn", view.level);
+        assert!(!view.at_cap);
+        assert_eq!(None, view.hint);
+    }
+
+    #[test]
+    fn capacity_view_at_cap_carries_the_hint() {
+        let state = CapacityState::new(8, 0, 8, CapacityLevel::Cap);
+        let view = build_capacity_view(Some(state));
+        assert_eq!(1.0, view.fraction);
+        assert!(view.at_cap);
+        assert_eq!(Some(CapacityIndicatorViewModel::CAP_HINT), view.hint);
+    }
+
+    #[test]
+    fn capacity_view_without_a_model_shows_the_placeholder() {
+        let view = build_capacity_view(None);
+        assert_eq!("— / — terminals", view.label);
+        assert_eq!(0.0, view.fraction);
+        assert!(!view.at_cap);
     }
 
     #[test]

@@ -22,7 +22,7 @@ use optimus_shell::ipc::naming;
 use optimus_shell::ipc::password::PasswordStore;
 use optimus_shell::ipc::pipe_server::{DispatchFn, PipeServer, PipeServerConfig};
 use optimus_shell::ipc::router::{self, SocketEffects};
-use optimus_shell::view::TreeView;
+use optimus_shell::view::{CapacityView, TreeView};
 
 /// The live engine-backed [`Surface`]: owns one [`Engine`] behind a `Mutex<Option<_>>`. The
 /// `Option` lets [`shutdown`](Surface::shutdown) drop the engine exactly once (idempotent — R2);
@@ -449,6 +449,13 @@ fn tree_view(host: tauri::State<'_, DomainHost>) -> TreeView {
     host.query(|d| d.tree_view())
 }
 
+/// The always-visible capacity meter snapshot (CLAUDE.md thesis). The frontend polls this after
+/// spawn/close and on a slow timer — the safe-zone ledger changes on reserve/release.
+#[tauri::command]
+fn capacity_state(host: tauri::State<'_, DomainHost>) -> CapacityView {
+    host.query(|d| d.capacity_view())
+}
+
 #[tauri::command]
 fn close_surface(host: tauri::State<'_, DomainHost>, id: i32) -> TreeView {
     host.query(move |d| {
@@ -776,6 +783,7 @@ fn main() {
             split,
             new_tab,
             tree_view,
+            capacity_state,
             close_surface,
             close_focused,
             focus_pane,

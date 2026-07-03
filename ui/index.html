@@ -6,9 +6,11 @@
   <title>Optimus</title>
   <link rel="stylesheet" href="./tokens.css" />
   <style>
+    /* App = terminals area + an always-visible capacity status bar (CLAUDE.md thesis). */
+    body { display: flex; flex-direction: column; }
     /* Split-tree surface (P4.2): panes absolutely positioned by their normalized rects; keyed
        by surface id and moved (never recreated) on relayout so scrollback survives a split. */
-    #app { position: relative; height: 100%; background: var(--surface-0); overflow: hidden; }
+    #app { position: relative; flex: 1; min-height: 0; background: var(--surface-0); overflow: hidden; }
     .pane {
       position: absolute;
       overflow: hidden;
@@ -23,10 +25,38 @@
     .divider:hover { background: var(--attention); opacity: 0.4; }
     .divider.vertical { width: 6px; margin-left: -3px; cursor: col-resize; }
     .divider.horizontal { height: 6px; margin-top: -3px; cursor: row-resize; }
+
+    /* Capacity meter: 8-pip safe-zone bar + label + SAFE-ZONE chip, always visible (thesis). */
+    #statusbar {
+      flex-shrink: 0; display: flex; align-items: center; gap: var(--md);
+      height: 26px; padding: 0 var(--sm); border-top: 1px solid var(--hairline);
+      background: var(--surface-1); font-size: var(--fs-meta); color: var(--text-muted);
+    }
+    .cap { display: flex; align-items: center; gap: var(--sm); }
+    .pips { display: inline-flex; gap: 2px; }
+    .pip { width: 6px; height: 12px; border-radius: 1px; background: var(--surface-selected); }
+    .pip.on { background: var(--capacity-calm); }
+    .level-warn .pip.on { background: var(--capacity-warn); }
+    .level-cap .pip.on { background: var(--capacity-cap); }
+    .cap-label { color: var(--text-primary); }
+    .chip {
+      padding: 1px var(--sm); border-radius: 3px; font-size: var(--fs-caption);
+      letter-spacing: 0.05em; color: var(--text-primary);
+      border: 1px solid var(--capacity-calm);
+    }
+    .chip.level-warn { border-color: var(--capacity-warn); }
+    .chip.level-cap { border-color: var(--capacity-cap); color: var(--capacity-cap); }
   </style>
 </head>
 <body>
   <div id="app"></div>
+  <footer id="statusbar">
+    <div id="cap-meter" class="cap level-calm">
+      <span class="pips"></span>
+      <span class="cap-label">— / — terminals</span>
+    </div>
+    <span id="safe-zone" class="chip level-calm">SAFE ZONE</span>
+  </footer>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

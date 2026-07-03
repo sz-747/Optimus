@@ -23,7 +23,7 @@ use crate::domain::surface_manager::{
     CreateSurfaceError, NoSurfaceFactory, SurfaceFactory, SurfaceManager,
 };
 use crate::domain::workspace::WorkspaceManager;
-use crate::view::{build_tree_view, TreeView};
+use crate::view::{build_capacity_view, build_tree_view, CapacityView, TreeView};
 
 /// The single-threaded model plane the socket effects mutate: the workspace manager (sidebar
 /// rows + reported metadata) and the notification coordinator (queue + store + policy). Both are
@@ -33,6 +33,9 @@ pub struct Domain {
     workspaces: WorkspaceManager,
     notifications: NotificationCoordinator,
     surfaces: SurfaceManager,
+    /// The RAM safe-zone governor, kept so the frontend can read the always-visible capacity meter
+    /// (`None` when the governor failed to start — the meter shows a placeholder).
+    capacity: Option<Arc<CapacityModel>>,
 }
 
 impl Default for Domain {
@@ -64,7 +67,8 @@ impl Domain {
         Self {
             workspaces: WorkspaceManager::new(),
             notifications: NotificationCoordinator::new(),
-            surfaces: SurfaceManager::new(factory, capacity),
+            surfaces: SurfaceManager::new(factory, capacity.clone()),
+            capacity,
         }
     }
 
@@ -140,6 +144,11 @@ impl Domain {
     /// this in one domain job so the frontend gets the fresh layout back from each call.
     pub fn tree_view(&self) -> TreeView {
         build_tree_view(&self.workspaces.selected().controller().snapshot())
+    }
+
+    /// The always-visible capacity meter DTO (CLAUDE.md thesis) — the current safe-zone ledger.
+    pub fn capacity_view(&self) -> CapacityView {
+        build_capacity_view(self.capacity.as_ref().map(|c| c.state()))
     }
 
     /// Split the focused pane, returning the new pane's surface id (a *model* surface with no

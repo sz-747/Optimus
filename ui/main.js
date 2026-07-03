@@ -3,6 +3,7 @@
 // and re-renders from each call's returned TreeView. Terminals are keyed by surface id and moved on
 // relayout, never recreated, so a split preserves scrollback + selection.
 import { createTerminal, pushResize, disposeTerminal } from "./terminal.js";
+import { initCapacity, refreshCapacity } from "./capacity.js";
 
 const { invoke } = window.__TAURI__.core;
 const app = document.getElementById("app");
@@ -133,8 +134,10 @@ async function spawnInto(command, args = {}) {
     entry.surfaceId = surface_id;
     terms.set(surface_id, entry);
     render(tree);
+    refreshCapacity(); // a spawn consumed a safe-zone slot
   } catch (e) {
     disposeTerminal(entry); // refused at cap (or failed) — drop the orphan terminal
+    refreshCapacity(); // a cap refusal is exactly when the meter should read full
     console.error(`${command} failed:`, e);
   }
 }
@@ -142,6 +145,14 @@ async function spawnInto(command, args = {}) {
 const doSplit = (direction) => spawnInto("split", { direction });
 const doNewTab = () => spawnInto("new_tab");
 const refreshFrom = (command, args) => invoke(command, args).then(render).catch(console.error);
+// Close frees a slot — re-render and refresh the meter.
+const doClose = () =>
+  invoke("close_focused")
+    .then((tree) => {
+      render(tree);
+      refreshCapacity();
+    })
+    .catch(console.error);
 
 // ---- Chrome shortcuts (mirror the ported ShortcutMap defaults; all Ctrl(+Shift)) ---------------
 // Reserved chords act on the chrome; everything else falls through to the focused xterm untouched.
@@ -162,7 +173,7 @@ function onKeydown(e) {
       case "d": return () => doSplit("right");
       case "e": return () => doSplit("down");
       case "t": return doNewTab;
-      case "w": return () => refreshFrom("close_focused");
+      case "w": return doClose;
       case "z": return () => refreshFrom("toggle_zoom");
       case ")":
       case "0": return () => refreshFrom("equalize"); // Ctrl+Shift+0 (shifted '0' is ')')
@@ -182,6 +193,7 @@ function onKeydown(e) {
 document.addEventListener("keydown", onKeydown, true); // capture: intercept before xterm sees it
 window.addEventListener("resize", () => invoke("tree_view").then(render).catch(console.error));
 
+initCapacity();
 spawnInto("spawn").catch((e) => {
   const banner = document.createElement("pre");
   banner.textContent = `boot failed: ${e}`;
