@@ -3,6 +3,22 @@ using System;
 namespace Optimus.Core;
 
 /// <summary>
+/// The kind of content a surface hosts (p6 U4). The model plane stays kind-agnostic — it mints bare
+/// <see cref="SurfaceId"/>s — so the kind lives in the surface plane: the host tells the
+/// <see cref="SurfaceManager"/> which registered factory realises a newly-created id. Every kind
+/// consumes one RAM safe-zone slot identically (a web pane is memory-heavy too), so admission is
+/// unaffected by which kind is created.
+/// </summary>
+public enum SurfaceKind
+{
+    /// <summary>A terminal (ConPTY + wgpu engine) — the default for every model-plane surface.</summary>
+    Terminal,
+
+    /// <summary>A WebView2 browser pane (p6 U4).</summary>
+    Web,
+}
+
+/// <summary>
 /// A live terminal surface as the model plane sees it (KTD3): an id plus the three lifecycle
 /// levers the <see cref="SurfaceManager"/> pulls. Deliberately knows nothing about WinUI, wgpu, or
 /// the engine FFI — the app provides the concrete <c>TerminalPane</c> implementation, which keeps

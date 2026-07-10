@@ -29,6 +29,7 @@ public sealed class ShortcutMapTests
     [InlineData(0x45, ShortcutAction.SplitDown)]
     [InlineData(0x30, ShortcutAction.Equalize)]
     [InlineData(0x5A, ShortcutAction.ToggleZoom)]
+    [InlineData(0x47, ShortcutAction.NewWebTab)] // Ctrl+Shift+G — open a WebView2 pane (p6 U4)
     public void Resolve_maps_ctrl_shift_chords(int keyCode, ShortcutAction expected)
     {
         Assert.Equal(expected, ShortcutMap.Resolve(CtrlShift, keyCode));
@@ -112,6 +113,21 @@ public sealed class ShortcutMapTests
         Assert.Null(c.ZoomedPane);
     }
 
+    [Fact] // NewWebTab is host-handled (surface plane); the pure model dispatcher leaves state untouched.
+    public void Apply_new_web_tab_is_a_controller_noop()
+    {
+        var c = new SplitTreeController();
+        PaneId pane = c.FocusedPane;
+        int tabsBefore = c.Tabs(pane).Count;
+        int panesBefore = c.AllPaneIds.Count;
+
+        ShortcutMap.Apply(c, ShortcutAction.NewWebTab); // no model op — WorkspaceView opens the web pane
+
+        Assert.Equal(tabsBefore, c.Tabs(pane).Count);   // no tab added in the model plane
+        Assert.Equal(panesBefore, c.AllPaneIds.Count);
+        Assert.Equal(pane, c.FocusedPane);
+    }
+
     // ---- Chord description (tooltip text) ----------------------------------------------------
 
     [Theory]
@@ -123,6 +139,7 @@ public sealed class ShortcutMapTests
     [InlineData(ShortcutAction.Equalize, "Ctrl+Shift+0")]
     [InlineData(ShortcutAction.FocusLeft, "Ctrl+Shift+Left")]
     [InlineData(ShortcutAction.FocusDown, "Ctrl+Shift+Down")]
+    [InlineData(ShortcutAction.NewWebTab, "Ctrl+Shift+G")]
     public void DescribeChord_formats_the_bound_chord(ShortcutAction action, string expected)
     {
         Assert.Equal(expected, ShortcutMap.DescribeChord(action));

@@ -14,18 +14,32 @@ namespace Optimus.Core;
 /// </summary>
 public sealed class SurfaceManager : IDisposable
 {
-    private readonly ISurfaceFactory _factory;
     private readonly CapacityModel? _capacity;
     private readonly Dictionary<SurfaceId, ISurface> _surfaces = new();
+    // One factory per surface kind (p6 U4). The ctor's factory registers as the default
+    // (Terminal); the host registers additional kinds (e.g. Web) via RegisterFactory. Keeping the
+    // map here — not the model plane — is what lets SplitTreeController stay kind-agnostic.
+    private readonly Dictionary<SurfaceKind, ISurfaceFactory> _factories = new();
 
     /// <summary>
-    /// <paramref name="capacity"/> is the RAM safe-zone admission governor (plan U5); null leaves
-    /// the manager ungoverned (tests, degraded startup — see <c>App.StartCapacityGovernor</c>).
+    /// <paramref name="factory"/> realises the default <see cref="SurfaceKind.Terminal"/> kind;
+    /// register others with <see cref="RegisterFactory"/>. <paramref name="capacity"/> is the RAM
+    /// safe-zone admission governor (plan U5); null leaves the manager ungoverned (tests, degraded
+    /// startup — see <c>App.StartCapacityGovernor</c>).
     /// </summary>
     public SurfaceManager(ISurfaceFactory factory, CapacityModel? capacity = null)
     {
-        _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+        _factories[SurfaceKind.Terminal] = factory ?? throw new ArgumentNullException(nameof(factory));
         _capacity = capacity;
+    }
+
+    /// <summary>
+    /// Register the factory that realises <paramref name="kind"/> (p6 U4). Replaces any prior
+    /// registration for that kind. The default <see cref="SurfaceKind.Terminal"/> is set in the ctor.
+    /// </summary>
+    public void RegisterFactory(SurfaceKind kind, ISurfaceFactory factory)
+    {
+        _factories[kind] = factory ?? throw new ArgumentNullException(nameof(factory));
     }
 
     /// <summary>The live surfaces, keyed by id.</summary>
@@ -39,22 +53,33 @@ public sealed class SurfaceManager : IDisposable
     /// a duplicate request for a live id returns the same instance rather than building a second.
     /// </summary>
     public ISurface CreateSurface(SurfaceId id, string? cwd = null, string? cmdline = null)
-        => TryCreateSurface(id, cwd, cmdline)
+        => TryCreateSurface(id, SurfaceKind.Terminal, cwd, cmdline)
            ?? throw new InvalidOperationException(
                $"Safe-zone cap reached; surface {id} refused. Governed callers must use TryCreateSurface.");
 
-    /// <summary>
-    /// Capacity-gated create (RAM safe-zone plan U5): the single spawn choke point. Returns the
-    /// existing surface for a live id (idempotent, never consumes a second slot), <c>null</c> when
-    /// the <see cref="CapacityModel"/> refuses a slot (graceful refusal — no factory call, no
-    /// throw), or the freshly built surface otherwise. A factory exception releases the
-    /// reservation before rethrowing. With no model attached, never refuses.
-    /// </summary>
+    /// <summary>Terminal-kind overload (the common case) — see <see cref="TryCreateSurface(SurfaceId, SurfaceKind, string?, string?)"/>.</summary>
     public ISurface? TryCreateSurface(SurfaceId id, string? cwd = null, string? cmdline = null)
+        => TryCreateSurface(id, SurfaceKind.Terminal, cwd, cmdline);
+
+    /// <summary>
+    /// Capacity-gated create (RAM safe-zone plan U5): the single spawn choke point. Realises
+    /// <paramref name="id"/> with the factory registered for <paramref name="kind"/> (p6 U4).
+    /// Returns the existing surface for a live id (idempotent, never consumes a second slot and
+    /// ignores <paramref name="kind"/> — the first kind wins), <c>null</c> when the
+    /// <see cref="CapacityModel"/> refuses a slot (graceful refusal — no factory call, no throw),
+    /// or the freshly built surface otherwise. A factory exception releases the reservation before
+    /// rethrowing. With no model attached, never refuses. Every kind consumes one slot identically.
+    /// </summary>
+    public ISurface? TryCreateSurface(SurfaceId id, SurfaceKind kind, string? cwd = null, string? cmdline = null)
     {
         if (_surfaces.TryGetValue(id, out ISurface? existing))
         {
             return existing; // idempotent per id (R1) — no capacity consumed
+        }
+
+        if (!_factories.TryGetValue(kind, out ISurfaceFactory? factory))
+        {
+            throw new InvalidOperationException($"No surface factory registered for kind {kind}.");
         }
 
         ReservationToken? token = null;
@@ -70,7 +95,7 @@ public sealed class SurfaceManager : IDisposable
         ISurface surface;
         try
         {
-            surface = _factory.Create(id, cwd, cmdline);
+            surface = factory.Create(id, cwd, cmdline);
         }
         catch
         {

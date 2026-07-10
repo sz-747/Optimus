@@ -36,6 +36,7 @@ public enum ShortcutAction
     NextTab,
     PreviousTab,
     NewTab,
+    NewWebTab, // open a WebView2 pane (p6 U4) — host-handled, not a model-plane op (see Apply)
     CloseTab,
     SplitRight, // side-by-side / vertical divider (KTD7)
     SplitDown,  // stacked / horizontal divider (KTD7)
@@ -63,6 +64,7 @@ public static class ShortcutMap
         public const int D0 = 0x30;
         public const int D = 0x44;
         public const int E = 0x45;
+        public const int G = 0x47;
         public const int T = 0x54;
         public const int W = 0x57;
         public const int Z = 0x5A;
@@ -90,6 +92,7 @@ public static class ShortcutMap
 
             // Tab lifecycle.
             [new(CtrlShift, VKey.T)] = ShortcutAction.NewTab,
+            [new(CtrlShift, VKey.G)] = ShortcutAction.NewWebTab, // G = "go to the web" (p6 U4)
             [new(CtrlShift, VKey.W)] = ShortcutAction.CloseTab,
 
             // Splits — D = split right (side-by-side), E = split down (stacked).
@@ -145,6 +148,7 @@ public static class ShortcutMap
         VKey.D0 => "0",
         VKey.D => "D",
         VKey.E => "E",
+        VKey.G => "G",
         VKey.T => "T",
         VKey.W => "W",
         VKey.Z => "Z",
@@ -179,6 +183,13 @@ public static class ShortcutMap
                 break;
             case ShortcutAction.NewTab:
                 controller.NewTab(controller.FocusedPane);
+                break;
+            case ShortcutAction.NewWebTab:
+                // Intentionally a no-op here. Opening a WebView2 pane needs the surface plane (a
+                // typed factory + the per-user UDF), which the model-plane controller has no access
+                // to. The host (WorkspaceView, via ShortcutRouter) handles this action; it lives in
+                // this table only so the chord is declared in one place and DescribeChord can label
+                // the affordance tooltip (p6 U4).
                 break;
             case ShortcutAction.CloseTab:
                 if (controller.FocusedSurface is SurfaceId surface)

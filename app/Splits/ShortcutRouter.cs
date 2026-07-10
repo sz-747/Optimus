@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Optimus.Core;
 using Microsoft.UI.Xaml;
@@ -21,11 +22,16 @@ internal sealed class ShortcutRouter
 {
     private readonly SplitTreeController _controller;
     private readonly SurfaceManager _surfaces;
+    // Host handler for the one chord whose effect lives in the surface plane, not the model plane:
+    // opening a WebView2 pane (p6 U4). The model controller can only mint a kind-agnostic surface, so
+    // the typed-surface intent is routed back to WorkspaceView. Null is tolerated (chord then no-ops).
+    private readonly Action? _onNewWebPane;
 
-    public ShortcutRouter(SplitTreeController controller, SurfaceManager surfaces)
+    public ShortcutRouter(SplitTreeController controller, SurfaceManager surfaces, Action? onNewWebPane = null)
     {
         _controller = controller;
         _surfaces = surfaces;
+        _onNewWebPane = onNewWebPane;
     }
 
     /// <summary>Register every default chord as a scoped accelerator on <paramref name="host"/>.</summary>
@@ -50,6 +56,14 @@ internal sealed class ShortcutRouter
 
     private void Dispatch(ShortcutAction action)
     {
+        // NewWebTab is host-handled (surface plane), not a model-plane controller op: route it to
+        // WorkspaceView, which sets the pending surface kind and then asks the controller for a tab.
+        if (action == ShortcutAction.NewWebTab)
+        {
+            _onNewWebPane?.Invoke();
+            return;
+        }
+
         ShortcutMap.Apply(_controller, action);
 
         // OS keyboard focus follows the derived model focus (R7/R8): after a focus or structural
