@@ -128,6 +128,29 @@ public sealed class SurfaceManagerCapacityTests
     }
 
     [Fact]
+    public void Web_kind_refusal_skips_its_factory_and_disposal_releases_the_slot()
+    {
+        var terminalFactory = new FakeFactory();
+        var webFactory = new FakeFactory();
+        var capacity = ModelWithCap(1);
+        var manager = new SurfaceManager(terminalFactory, capacity);
+        manager.RegisterFactory(SurfaceKind.Web, webFactory);
+
+        Assert.NotNull(manager.TryCreateSurface(new SurfaceId(1), SurfaceKind.Web));
+        Assert.Equal(1, webFactory.CreateCalls);
+
+        Assert.Null(manager.TryCreateSurface(new SurfaceId(2), SurfaceKind.Web));
+        Assert.Equal(1, webFactory.CreateCalls); // refusal happens before the selected factory runs
+        Assert.Equal(0, terminalFactory.CreateCalls);
+
+        manager.DisposeSurface(new SurfaceId(1));
+
+        Assert.Equal(0, capacity.State.Used + capacity.State.Reserved);
+        Assert.NotNull(manager.TryCreateSurface(new SurfaceId(2), SurfaceKind.Web));
+        Assert.Equal(2, webFactory.CreateCalls);
+    }
+
+    [Fact]
     public void DisposeAll_releases_every_slot()
     {
         var factory = new FakeFactory();

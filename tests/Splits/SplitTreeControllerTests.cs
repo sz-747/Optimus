@@ -339,6 +339,31 @@ public sealed class SplitTreeControllerTests
         Assert.Contains(newSurface, closed);
     }
 
+    [Fact]
+    public void NewTab_surface_created_handler_can_reject_without_leaving_a_phantom_tab()
+    {
+        var c = new SplitTreeController();
+        PaneId pane = c.FocusedPane;
+        SurfaceId original = c.FocusedSurface!.Value;
+        SurfaceId? rejected = null;
+
+        // SurfaceCreated is synchronous and fires before NewTab publishes its snapshot. A host
+        // whose surface factory refuses admission can therefore roll the model mutation back.
+        c.SurfaceCreated += id =>
+        {
+            rejected = id;
+            c.CloseTab(id);
+        };
+
+        c.NewTab(pane);
+
+        Assert.NotNull(rejected);
+        Assert.Single(c.Tabs(pane));
+        Assert.Equal(original, c.SelectedTab(pane));
+        Assert.Equal(original, c.FocusedSurface);
+        Assert.DoesNotContain(rejected!.Value, c.AllSurfaces);
+    }
+
     // ---- Shared id allocation (Phase 5: multiple workspaces, globally unique ids) -------------
 
     [Fact]

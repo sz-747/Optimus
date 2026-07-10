@@ -248,13 +248,20 @@ public sealed class WorkspaceView : UserControl
         SurfaceKind kind = _pendingSurfaceKind;
         _pendingSurfaceKind = SurfaceKind.Terminal;
 
-        // Capacity-gated (RAM safe-zone plan U5): at the cap the create is refused gracefully —
-        // the model-plane pane stays engineless rather than crashing the machine by over-spawning.
-        // U6 disables the spawn affordances before users normally hit this path.
+        // Capacity-gated (RAM safe-zone plan U5): at the cap the create is refused gracefully.
+        // Any just-created non-root model surface must be rolled back so no blank tab or pane
+        // survives the refusal. Keep a refused sole root in place: closing it would trigger the
+        // workspace's empty-tree reseed loop when the machine cannot admit even one surface.
         ISurface? surface = _surfaces.TryCreateSurface(id, kind); // default shell, inherited cwd (Phase-1 parity)
         if (surface is null)
         {
             System.Diagnostics.Debug.WriteLine($"[capacity] surface {id} refused: safe-zone cap reached");
+            if (_controller.AllSurfaces.Count > 1)
+            {
+                // Structural mutations raise SurfaceCreated before their final snapshot. Closing
+                // synchronously restores the previous selection/tree before that snapshot lands.
+                _controller.CloseTab(id);
+            }
             return;
         }
         surface.TitleChanged += title => OnSurfaceTitleChanged(id, title);

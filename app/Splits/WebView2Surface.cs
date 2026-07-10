@@ -42,6 +42,7 @@ internal sealed class WebView2Surface : UserControl, ISurface
     private readonly TextBox _address;
     private readonly WebView2 _webView = new();
     private readonly FrameworkElement _runtimeMissing;
+    private readonly FrameworkElement _initializationFailed;
 
     private string _pendingUrl;
     private bool _coreReady;
@@ -93,6 +94,11 @@ internal sealed class WebView2Surface : UserControl, ISurface
         _runtimeMissing.Visibility = Visibility.Collapsed;
         Grid.SetRow(_runtimeMissing, 1);
         _root.Children.Add(_runtimeMissing);
+
+        _initializationFailed = BuildInitializationFailedPanel();
+        _initializationFailed.Visibility = Visibility.Collapsed;
+        Grid.SetRow(_initializationFailed, 1);
+        _root.Children.Add(_initializationFailed);
 
         Content = _root;
         this.Loaded += OnLoaded;
@@ -153,15 +159,22 @@ internal sealed class WebView2Surface : UserControl, ISurface
             _webView.CoreWebView2.DocumentTitleChanged += OnDocumentTitleChanged;
             TitleChanged?.Invoke("New tab");
 
-            _address.Text = _pendingUrl == DefaultUrl ? string.Empty : _pendingUrl;
+            // Do not erase text the user started entering while WebView2 initialized.
+            if (string.IsNullOrEmpty(_address.Text))
+            {
+                _address.Text = _pendingUrl == DefaultUrl ? string.Empty : _pendingUrl;
+            }
             Navigate(_pendingUrl);
         }
         catch (Exception ex)
         {
-            // Init can still fail (corrupt UDF, runtime removed mid-session). Degrade to the inline
-            // panel rather than crash the whole app (terminals must keep running).
+            // A corrupt/locked UDF, invalid host window, or browser startup failure is not the same
+            // as a missing runtime. Degrade accurately and let a newly opened pane retry.
             App.LogError("WebView2Surface.Initialize", ex);
-            ShowRuntimeMissing();
+            if (!_lifecycle.IsDisposed)
+            {
+                ShowInitializationFailed();
+            }
         }
     }
 
@@ -280,7 +293,15 @@ internal sealed class WebView2Surface : UserControl, ISurface
     private void ShowRuntimeMissing()
     {
         _webView.Visibility = Visibility.Collapsed;
+        _initializationFailed.Visibility = Visibility.Collapsed;
         _runtimeMissing.Visibility = Visibility.Visible;
+    }
+
+    private void ShowInitializationFailed()
+    {
+        _webView.Visibility = Visibility.Collapsed;
+        _runtimeMissing.Visibility = Visibility.Collapsed;
+        _initializationFailed.Visibility = Visibility.Visible;
     }
 
     /// <summary>
@@ -289,6 +310,31 @@ internal sealed class WebView2Surface : UserControl, ISurface
     /// All color/type come from <see cref="Tokens"/> (no raw literals — DESIGN.md / guard test).
     /// </summary>
     private FrameworkElement BuildRuntimeMissingPanel()
+    {
+        var install = new Button
+        {
+            Content = new TextBlock { Text = "Install WebView2 runtime", FontSize = Tokens.FontBody },
+            Foreground = Tokens.TextPrimary,
+            Background = Tokens.SurfaceSelected,
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(12, 6, 12, 6),
+        };
+        install.Click += (_, _) => LaunchRuntimeDownload();
+
+        return BuildFailurePanel(
+            "WebView2 runtime required",
+            "This web pane needs the Microsoft Edge WebView2 runtime, which isn't installed. "
+                + "Your terminals and the safe-zone cap are unaffected — only this pane is disabled.",
+            install);
+    }
+
+    private FrameworkElement BuildInitializationFailedPanel() => BuildFailurePanel(
+        "Web pane couldn't start",
+        "WebView2 is installed, but this pane could not start. Close and reopen the pane to retry. "
+            + "Your terminals and the safe-zone cap are unaffected.");
+
+    private FrameworkElement BuildFailurePanel(string heading, string detail, Button? action = null)
     {
         // Default StackPanel orientation is Vertical; not set explicitly to avoid the name clash
         // between Microsoft.UI.Xaml.Controls.Orientation and Optimus.Core.Orientation (splits).
@@ -303,7 +349,7 @@ internal sealed class WebView2Surface : UserControl, ISurface
 
         stack.Children.Add(new TextBlock
         {
-            Text = "WebView2 runtime required",
+            Text = heading,
             Foreground = Tokens.TextPrimary,
             FontSize = Tokens.FontTitle,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -311,8 +357,7 @@ internal sealed class WebView2Surface : UserControl, ISurface
 
         stack.Children.Add(new TextBlock
         {
-            Text = "This web pane needs the Microsoft Edge WebView2 runtime, which isn't installed. "
-                 + "Your terminals and the safe-zone cap are unaffected — only this pane is disabled.",
+            Text = detail,
             Foreground = Tokens.TextMuted,
             FontSize = Tokens.FontBody,
             TextWrapping = TextWrapping.Wrap,
@@ -320,17 +365,10 @@ internal sealed class WebView2Surface : UserControl, ISurface
             TextAlignment = TextAlignment.Center,
         });
 
-        var install = new Button
+        if (action is not null)
         {
-            Content = new TextBlock { Text = "Install WebView2 runtime", FontSize = Tokens.FontBody },
-            Foreground = Tokens.TextPrimary,
-            Background = Tokens.SurfaceSelected,
-            BorderThickness = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Padding = new Thickness(12, 6, 12, 6),
-        };
-        install.Click += (_, _) => LaunchRuntimeDownload();
-        stack.Children.Add(install);
+            stack.Children.Add(action);
+        }
 
         var host = new Grid { Background = Tokens.Surface0 };
         host.Children.Add(stack);

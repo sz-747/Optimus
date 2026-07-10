@@ -142,4 +142,4 @@ it appears after first opening a web pane.
 
 ## 4. Sign-off line for the tracker
 
-`clean-install smoke: <VM | fresh profile (machine-runtime caveat)> · publish-folder run OK · installer run OK · indicator live · capacity.json written · CLI on PATH OK`
+`clean-install smoke: <VM | fresh profile (machine-runtime caveat)> · publish-folder run OK · installer run OK · indicator live · capacity.json written · CLI on PATH OK · WebView2 heavy-site OK · cap refusal rolled back · UDF written · clean exit/no stale WebView2 process`

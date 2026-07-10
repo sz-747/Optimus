@@ -88,41 +88,43 @@ public partial class App : Application
     /// group (less memory than one per pane — the safe-zone whole point), and is created lazily so a
     /// session that never opens a web pane never spins up the runtime. Created with the explicit
     /// per-user UDF via <see cref="CoreWebView2Environment.CreateWithOptionsAsync"/> (the call the
-    /// installer contract names). The task is cached even on failure so the caller sees the same
-    /// fault rather than hammering a broken runtime; web panes catch it and show their inline
-    /// "runtime required" fallback (KTD: fail-open, never block terminal spawning).
+    /// installer contract names). Concurrent callers share one in-flight task; a failed task is
+    /// cleared after it has been observed so a later pane can retry a transient failure.
     /// </summary>
-    internal static Task<CoreWebView2Environment> GetWebView2EnvironmentAsync()
+    internal static async Task<CoreWebView2Environment> GetWebView2EnvironmentAsync()
     {
+        Task<CoreWebView2Environment> environmentTask;
         lock (_webView2EnvironmentLock)
         {
-            return _webView2Environment ??= CreateWebView2EnvironmentAsync();
+            environmentTask = _webView2Environment ??= CreateWebView2EnvironmentAsync();
+        }
+
+        try
+        {
+            return await environmentTask;
+        }
+        catch
+        {
+            // Clear only the task this caller observed. Another pane may already have started a
+            // newer attempt after the failure completed, and an older waiter must not erase it.
+            lock (_webView2EnvironmentLock)
+            {
+                if (ReferenceEquals(_webView2Environment, environmentTask))
+                {
+                    _webView2Environment = null;
+                }
+            }
+            throw;
         }
     }
 
     private static async Task<CoreWebView2Environment> CreateWebView2EnvironmentAsync()
     {
-        try
-        {
-            Directory.CreateDirectory(WebView2UserDataFolder);
-            return await CoreWebView2Environment.CreateWithOptionsAsync(
-                browserExecutableFolder: null,
-                userDataFolder: WebView2UserDataFolder,
-                options: null);
-        }
-        catch
-        {
-            // Do not memoize a transient failure (locked/corrupt UDF, momentary permissions issue).
-            // GetWebView2EnvironmentAsync caches the *task*, so a faulted task would otherwise make
-            // every later web-pane open fail for the whole process lifetime. Clear it so the next
-            // open retries from scratch; the awaiting WebView2Surface still degrades to its inline
-            // "runtime required" panel for this attempt.
-            lock (_webView2EnvironmentLock)
-            {
-                _webView2Environment = null;
-            }
-            throw;
-        }
+        Directory.CreateDirectory(WebView2UserDataFolder);
+        return await CoreWebView2Environment.CreateWithOptionsAsync(
+            browserExecutableFolder: null,
+            userDataFolder: WebView2UserDataFolder,
+            options: null);
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
