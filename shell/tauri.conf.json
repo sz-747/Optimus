@@ -3,6 +3,7 @@
   "productName": "Optimus",
   "version": "0.1.0",
   "identifier": "io.petrex.optimus",
+  "mainBinaryName": "optimus-shell",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:5173",
@@ -29,9 +30,13 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": {
+      "windows/optimus-user-path.ps1": "optimus-user-path.ps1"
+    },
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "./windows/installer-hooks.nsh"
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

@@ -37,7 +37,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
-      # Release bundle: NSIS per-user installer + WebView2 bootstrapper (see shell/tauri.conf.json).
+      # Release bundle: NSIS per-user installer; WebView2 is bootstrapped at install time.
       # `tauri` locates shell/tauri.conf.json from the repo root.
       - run: npm run tauri -- build
 

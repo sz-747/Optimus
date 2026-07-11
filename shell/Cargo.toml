@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Optimus — capacity-aware terminal multiplexer (Tauri shell)"
 license = "MIT"
+default-run = "optimus-shell"
+
+[[bin]]
+name = "optimus"
+path = "src/optimus_cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
