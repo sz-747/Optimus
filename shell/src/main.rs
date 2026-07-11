@@ -12,6 +12,7 @@ use tauri::ipc::Channel;
 use tauri::Manager;
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
+use optimus_shell::child_environment;
 use optimus_shell::domain::capacity::{CapacityModel, CapacityProvider};
 use optimus_shell::domain::ids::{BranchId, PaneId, SurfaceId};
 use optimus_shell::domain::notifications::{NotificationId, TerminalNotification};
@@ -147,13 +148,15 @@ struct EngineSurfaceFactory {
     /// Per-surface sinks awaiting creation, keyed by the id the spawn command will create.
     pending: Mutex<HashMap<SurfaceId, StagedSink>>,
     job_memory_limit_bytes: usize,
+    pipe_name: String,
 }
 
 impl EngineSurfaceFactory {
-    fn new(job_memory_limit_bytes: usize) -> Self {
+    fn new(job_memory_limit_bytes: usize, pipe_name: String) -> Self {
         Self {
             pending: Mutex::new(HashMap::new()),
             job_memory_limit_bytes,
+            pipe_name,
         }
     }
 
@@ -218,8 +221,9 @@ impl SurfaceFactory for EngineSurfaceFactory {
             }),
         )
         .map_err(|e| e.to_string())?;
+        let environment = child_environment::for_surface(id, &self.pipe_name);
         engine
-            .spawn_shell(cmdline.unwrap_or(""), cwd)
+            .spawn_shell_with_environment(cmdline.unwrap_or(""), cwd, &environment)
             .map_err(|e| e.to_string())?;
         Ok(Arc::new(EngineSurface::new(id, engine)))
     }
@@ -271,9 +275,8 @@ impl CapacityProvider for Win32CapacityProvider {
 /// `SurfaceManager`, so a spawn past the RAM safe-zone cap is refused. Returns the [`SurfaceId`] the
 /// frontend echoes back for input/resize — the same id external agents name over the pipe.
 ///
-/// ponytail: one live terminal backing the model's seeded pane. Multi-pane spawn (allocating a new
-/// tree tab + setting `OPTIMUS_SURFACE_ID` in the child env) is future work; today the agent path
-/// resolves to this one surface via `selected_focused_surface`.
+/// Every factory-created shell receives its own `OPTIMUS_SURFACE_ID`, including this compatibility
+/// command, so caller-scoped agent hooks resolve to the pane that launched them.
 #[tauri::command]
 fn dev_spawn_shell(
     factory: tauri::State<'_, Arc<EngineSurfaceFactory>>,
@@ -780,13 +783,16 @@ fn password_store() -> PasswordStore {
 /// Start the named-pipe control server on the resolved pipe name + control mode (env-overridable,
 /// same scheme external agents connect to). Commands land on `host` (the real model plane). Kept
 /// in Tauri managed state so it lives for the app and stops cleanly on exit.
-fn start_pipe_server(host: DomainHost) -> PipeServer {
+fn resolved_pipe_name() -> String {
     let resolved = naming::resolve_from_environment(|k| std::env::var(k).ok());
-    let pipe_name = if resolved.trim().is_empty() {
+    if resolved.trim().is_empty() {
         naming::build_pipe_name("stable", None)
     } else {
         resolved
-    };
+    }
+}
+
+fn start_pipe_server(host: DomainHost, pipe_name: String) -> PipeServer {
     let mode = access::parse_mode(std::env::var(access::CONTROL_MODE_ENV).ok().as_deref());
     PipeServer::start(
         PipeServerConfig {
@@ -860,13 +866,14 @@ fn main() {
             // ponytail: no hard per-process memory cap (0) — the job still KILL_ON_JOB_CLOSE-ties
             // each shell's lifetime; the count-based safe zone is the real guarantee. Wire a real
             // per-process ceiling (≈2× a calibrated budget) once calibration is trustworthy.
-            let factory = Arc::new(EngineSurfaceFactory::new(0));
+            let pipe_name = resolved_pipe_name();
+            let factory = Arc::new(EngineSurfaceFactory::new(0, pipe_name.clone()));
 
             // The domain thread owns the workspace + notification + surface model; the pipe server
             // and the frontend commands both drive it through this one handle.
             let host =
                 DomainHost::spawn_with(factory.clone() as Arc<dyn SurfaceFactory>, Some(capacity));
-            app.manage(start_pipe_server(host.clone()));
+            app.manage(start_pipe_server(host.clone(), pipe_name));
             app.manage(host);
             app.manage(factory);
             Ok(())
@@ -904,6 +911,8 @@ fn main() {
 mod tests {
     use super::*;
     use serde_json::Value;
+    use std::time::{Duration, Instant};
+    use tauri::ipc::InvokeResponseBody;
 
     /// The app's own dispatch closure + effects must answer the wire protocol: a `capabilities`
     /// V2 frame round-trips to `ok:true` with the advertised `v1,v2`. Guards the main-side wiring
@@ -963,12 +972,62 @@ mod tests {
     /// invariant that keeps a surface's PTY output wired to the right invoke's Channel.
     #[test]
     fn factory_refuses_to_create_without_a_staged_sink() {
-        let factory = EngineSurfaceFactory::new(0);
+        let factory = EngineSurfaceFactory::new(0, naming::build_pipe_name("dev", Some("test")));
         let err = match factory.create(SurfaceId(1), None, None) {
             Ok(_) => panic!("expected an error with no staged sink"),
             Err(e) => e,
         };
         assert!(err.contains("no staged output channel"), "{err}");
+    }
+
+    #[test]
+    fn factory_injects_surface_identity_and_its_authoritative_pipe() {
+        let pipe_name = naming::build_pipe_name("dev", Some("factory-test"));
+        let factory = EngineSurfaceFactory::new(0, pipe_name.clone());
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let output = Arc::clone(&captured);
+        let on_output: Channel<Vec<u8>> = Channel::new(move |body| {
+            let chunk = match body {
+                InvokeResponseBody::Raw(bytes) => bytes,
+                InvokeResponseBody::Json(json) => {
+                    serde_json::from_str(&json).expect("channel byte payload")
+                }
+            };
+            output
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(chunk);
+            Ok(())
+        });
+        let on_event: Channel<String> = Channel::new(|_| Ok(()));
+        let surface_id = SurfaceId(23);
+        factory.stage(surface_id, on_output, on_event);
+
+        let surface = factory
+            .create(
+                surface_id,
+                None,
+                Some("cmd.exe /d /c echo %OPTIMUS_SURFACE_ID% %OPTIMUS_SOCKET_PATH%"),
+            )
+            .expect("create engine-backed surface");
+
+        let expected = format!("{surface_id} {pipe_name}");
+        let started = Instant::now();
+        loop {
+            let text =
+                String::from_utf8_lossy(&captured.lock().unwrap_or_else(PoisonError::into_inner))
+                    .into_owned();
+            if text.contains(&expected) {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(15),
+                "factory child environment did not reach the shell; output was: {text}"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        surface.shutdown();
     }
 
     /// The real capacity provider reads this machine's RAM — proves the `GlobalMemoryStatusEx`

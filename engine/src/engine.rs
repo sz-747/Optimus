@@ -105,6 +105,7 @@ enum Cmd {
     SpawnShell {
         cmdline: String,
         cwd: Option<String>,
+        environment: Vec<(String, String)>,
         reply: SyncSender<Result<(), EngineError>>,
     },
     PtyBytes(Vec<u8>),
@@ -200,6 +201,18 @@ impl Engine {
     /// Spawn the shell inside a fresh ConPTY sized to the current grid. An empty `cmdline`
     /// selects the default shell (pwsh → powershell → cmd).
     pub fn spawn_shell(&mut self, cmdline: &str, cwd: Option<&str>) -> Result<(), EngineError> {
+        self.spawn_shell_with_environment(cmdline, cwd, &[])
+    }
+
+    /// Spawn a shell with child-only environment overrides. Overrides are merged with the
+    /// inherited process environment without mutating it, so parallel panes cannot exchange
+    /// caller identity or socket routing.
+    pub fn spawn_shell_with_environment(
+        &mut self,
+        cmdline: &str,
+        cwd: Option<&str>,
+        environment: &[(String, String)],
+    ) -> Result<(), EngineError> {
         let cmdline = if cmdline.trim().is_empty() {
             default_shell()
         } else {
@@ -209,6 +222,7 @@ impl Engine {
         self.send(Cmd::SpawnShell {
             cmdline,
             cwd: cwd.map(str::to_string),
+            environment: environment.to_vec(),
             reply,
         })?;
         wait.recv().map_err(|_| err("worker thread gone"))?
@@ -397,9 +411,10 @@ impl WorkerState {
             Cmd::SpawnShell {
                 cmdline,
                 cwd,
+                environment,
                 reply,
             } => {
-                let _ = reply.send(self.spawn_shell(&cmdline, cwd.as_deref()));
+                let _ = reply.send(self.spawn_shell(&cmdline, cwd.as_deref(), &environment));
             }
             Cmd::PtyBytes(buf) => {
                 // OSC 99 (Kitty notifications): xterm.js has no OSC-99 handler and agents
@@ -432,8 +447,13 @@ impl WorkerState {
         false
     }
 
-    fn spawn_shell(&mut self, cmdline: &str, cwd: Option<&str>) -> Result<(), EngineError> {
-        let pty = ConPty::spawn(cmdline, cwd, self.cols, self.rows)
+    fn spawn_shell(
+        &mut self,
+        cmdline: &str,
+        cwd: Option<&str>,
+        environment: &[(String, String)],
+    ) -> Result<(), EngineError> {
+        let pty = ConPty::spawn_with_environment(cmdline, cwd, self.cols, self.rows, environment)
             .map_err(|e| err(format!("spawn shell failed: {e}")))?;
         // Publish the child PID + an engine-owned duplicate of its process handle before
         // the synchronous reply unblocks the caller, so both are valid the moment

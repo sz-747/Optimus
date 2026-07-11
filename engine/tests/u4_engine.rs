@@ -5,7 +5,7 @@
 //! Characterization port of the pre-migration U4 tests: same assertions, but the oracle is
 //! the raw byte stream (what xterm.js will consume) instead of a wezterm-term grid.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
 use optimus_engine::{Engine, EngineEvent, EngineOptions};
@@ -57,6 +57,74 @@ fn shell_output_reaches_the_bytes_hook() {
 
     // Engine drop runs ordered teardown (ClosePseudoConsole → join reader → drop PTY).
     drop(engine);
+}
+
+#[test]
+fn spawned_shell_receives_environment_overrides() {
+    let (mut engine, bytes, _events) = engine_with_capture();
+    let parent_value = std::env::var_os("OPTIMUS_ENGINE_ENV_TEST");
+    let inherited_system_root = std::env::var("SystemRoot").expect("SystemRoot is inherited");
+    let environment = vec![(
+        "OPTIMUS_ENGINE_ENV_TEST".to_string(),
+        "surface_marker_91".to_string(),
+    )];
+
+    engine
+        .spawn_shell_with_environment(
+            "cmd.exe /d /c echo %OPTIMUS_ENGINE_ENV_TEST% %SystemRoot% inherited_complete_91",
+            None,
+            &environment,
+        )
+        .expect("spawn shell with environment override");
+
+    let out = wait_for_output(&bytes, "inherited_complete_91", Duration::from_secs(15));
+    assert!(
+        out.contains("surface_marker_91"),
+        "child did not receive the environment override; output was:\n{out}"
+    );
+    assert!(
+        out.contains(&inherited_system_root),
+        "child lost an inherited environment variable; output was:\n{out}"
+    );
+    assert_eq!(
+        std::env::var_os("OPTIMUS_ENGINE_ENV_TEST"),
+        parent_value,
+        "child environment overrides must not mutate the host process"
+    );
+}
+
+#[test]
+fn parallel_shells_keep_environment_overrides_isolated() {
+    fn spawn_child(marker: &str, barrier: Arc<Barrier>) -> std::thread::JoinHandle<String> {
+        let marker = marker.to_string();
+        std::thread::spawn(move || {
+            let (mut engine, bytes, _events) = engine_with_capture();
+            let environment = vec![("OPTIMUS_PARALLEL_SURFACE_TEST".to_string(), marker.clone())];
+            barrier.wait();
+            engine
+                .spawn_shell_with_environment(
+                    "cmd.exe /d /c echo %OPTIMUS_PARALLEL_SURFACE_TEST%",
+                    None,
+                    &environment,
+                )
+                .expect("spawn parallel shell");
+            let output = wait_for_output(&bytes, &marker, Duration::from_secs(15));
+            drop(engine);
+            output
+        })
+    }
+
+    let barrier = Arc::new(Barrier::new(3));
+    let first = spawn_child("surface_S31", Arc::clone(&barrier));
+    let second = spawn_child("surface_S32", Arc::clone(&barrier));
+    barrier.wait();
+
+    let first_output = first.join().expect("first pane thread");
+    let second_output = second.join().expect("second pane thread");
+    assert!(first_output.contains("surface_S31"), "{first_output}");
+    assert!(!first_output.contains("surface_S32"), "{first_output}");
+    assert!(second_output.contains("surface_S32"), "{second_output}");
+    assert!(!second_output.contains("surface_S31"), "{second_output}");
 }
 
 #[test]

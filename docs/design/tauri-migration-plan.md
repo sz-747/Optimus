@@ -198,6 +198,12 @@ TokensGuard's 1 became stylelint). Zero test-semantics changes without a written
 Exit gate: old CLI's test vectors pass against new server; `optimus hooks claude stop`
 round-trips end-to-end from a shell spawned inside a migrated pane.
 
+Automated coverage is a three-part composition: the main-binary factory test proves the private
+`EngineSurfaceFactory` injects its actual `SurfaceId` and authoritative pipe; then
+`shell/tests/pane_hook_roundtrip.rs` launches the generated hook through a real ConPTY child,
+real `optimus.exe`, and unique production pipe; the app-dispatch test covers router-to-domain
+mutation. A final manual hook from the packaged GUI remains part of the P5/P6 release drill.
+
 ## 6. Phase 4 — Frontend build-out
 
 All state authoritative in Rust; frontend renders snapshots + sends intents (same

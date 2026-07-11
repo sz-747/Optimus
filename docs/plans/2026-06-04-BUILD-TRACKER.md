@@ -2,7 +2,7 @@
 title: "Build Tracker — Optimus (cmux for Windows)"
 status: active
 created: 2026-06-11
-branch: feat/ram-safe-zone
+branch: feat/control-plane-foundation
 ---
 
 # Build Tracker — Optimus (cmux for Windows)
@@ -11,6 +11,12 @@ branch: feat/ram-safe-zone
 first thing every `/ce-work` session reads. Plans tell you *how*; this tracker
 tells you *order, ownership, and state*.
 
+> **Architecture pivot (2026-07-11):** Active implementation moved from the
+> WinUI/wgpu stack to the Rust/Tauri plan in
+> `docs/design/tauri-migration-plan.md`. The legacy WinUI p6 U4/p6 U5 rows below
+> are retained as history but MUST NOT be resumed. Open WebView2 PR #11 is
+> superseded and must not be merged into the Tauri line.
+
 Source plans:
 - **Umbrella:** [docs/plans/2026-06-04-001-feature-cmux-windows-plan.md](2026-06-04-001-feature-cmux-windows-plan.md) — cmux-for-Windows master plan (Phases 1–6).
 - **Phase 2 — tabs + splits:** [docs/plans/2026-06-05-001-feat-phase2-tabs-splits-plan.md](2026-06-05-001-feat-phase2-tabs-splits-plan.md) — _shipped (status header flipped to `completed` in res U1)._
@@ -18,9 +24,30 @@ Source plans:
 - **Discoverable pane controls:** [docs/plans/2026-06-06-001-feat-discoverable-pane-controls-plan.md](2026-06-06-001-feat-discoverable-pane-controls-plan.md) — _shipped._
 - **RAM safe-zone MVP:** [docs/plans/2026-06-10-001-feat-ram-safe-zone-mvp-plan.md](2026-06-10-001-feat-ram-safe-zone-mvp-plan.md) — _shipped._
 
-**Scope of this tracker:** Phase 6 (polish + optional) from the umbrella plan, plus
-named residuals carried over from the RAM safe-zone smoke and prior phases.
-Everything earlier than Phase 6 is shipped; do **not** re-execute it.
+**Current scope:** finish the Tauri cutover and its named residuals on
+`feat/control-plane-foundation`. The original Phase 6 ledger remains below as a
+historical record; do **not** re-execute completed or superseded WinUI units.
+
+### Active Tauri continuation
+
+- [ ] **tauri P3-R1** - Inject each model surface's `OPTIMUS_SURFACE_ID` and the
+  authoritative `OPTIMUS_SOCKET_PATH` into its ConPTY child environment, then
+  prove `optimus hooks claude stop` reaches the production named pipe with that
+  pane identity. Worktree: `.worktrees/feat/control-plane-foundation` - Branch:
+  `feat/control-plane-foundation` - Predecessor: `deaa620` (bundled CLI sidecar).
+  Merge: _pending; tick only after this branch reaches `main`_.
+
+- [ ] **tauri P5-M1** - Complete the clean Windows 11 crash-drill matrix,
+  including 150%/200% DPI, sleep/resume, forced WebGL context loss, and clean
+  shutdown with live shells. This is a manual release gate, not optional polish.
+
+- [ ] **tauri P6-M1** - Verify the NSIS installer on a clean Windows VM: install,
+  Start-menu GUI launch without a console, CLI PATH opt-in, toast attribution,
+  and clean uninstall. Record the exact installer artifact and result.
+
+- [ ] **tauri P7** - Delete the legacy .NET/WinUI stack only after P5-M1 and
+  P6-M1 pass. Until then `app/`, `tests/`, the old Inno installer, and C# build
+  files remain a rollback reference, not the active implementation.
 
 ---
 
@@ -46,18 +73,15 @@ Everything earlier than Phase 6 is shipped; do **not** re-execute it.
   git worktree remove <absolute-path>
   git branch -d <branch>
   ```
-- **R5. Standing build rules** (from `CLAUDE.md`):
-  - **No raw `Color.FromArgb` / inline `FontSize` literals in view code** — use
-    `app/Design/Tokens.cs`.
-  - Read [DESIGN.md](../../DESIGN.md) before any chrome change.
+- **R5. Standing build rules** (active Rust/Tauri line):
+  - Read [DESIGN.md](../../DESIGN.md) before any chrome change and use the web
+    tokens in `ui/tokens.css`; do not add raw visual literals to view modules.
   - Lead with the safe-zone capacity guarantee in any copy; never call Optimus
     "just a terminal multiplexer".
-  - Verification gates per unit: `dotnet test tests/Optimus.Core.Tests.csproj`
-    must pass (current floor **238**); `cargo test --manifest-path engine\Cargo.toml`
-    must pass (current floor **19**); `dotnet build app\Optimus.App.csproj`
-    must produce **0 warnings, 0 errors**. Build the Rust engine via
-    `C:\Users\steve\.cargo\bin\cargo.exe build --lib` **before** the app build so
-    `NativeMethods.g.cs` is fresh.
+  - Verification gates per unit: `cargo fmt --all --check`,
+    `cargo clippy --workspace --all-targets -- -D warnings`,
+    `cargo test --workspace`, `node --test ui/mock/tauri-mock.test.mjs`, and
+    `npm run build`. Any shell/packaging change also runs `npm run tauri -- build`.
   - Conventional-commit subjects; small PRs; codex adversarial review on every
     non-docs PR.
 - **R6. Log to durable memory** — architectural decisions and surprising bug
@@ -183,7 +207,7 @@ touches it — others stay disjoint.
   `FontSize`, whitelisting only `Tokens.cs`)
   _Mandated by CLAUDE.md R5. Single-owner per file — no overlap with U4._
 
-- [ ] **p6 U4** — WebView2 pane (`Microsoft.UI.Xaml.Controls.WebView2`). MUST
+- **SUPERSEDED p6 U4** — WebView2 pane (`Microsoft.UI.Xaml.Controls.WebView2`). MUST
   set a per-user writable UDF via `CoreWebView2Environment.CreateWithOptionsAsync`
   (unpackaged default UDF under the exe dir is non-writable and the init
   throws). Detect/redistribute the Evergreen runtime per the U3 bootstrap
@@ -191,13 +215,13 @@ touches it — others stay disjoint.
   Worktree: `wt-p6-u4-webview2-pane` · Branch: `feat/p6-u4-webview2-pane`
   Files: new `app/Splits/WebView2Surface.cs` (mirror `TerminalPane` lifecycle),
   `core/Splits/SurfaceManager.cs` registration, `app/App.xaml.cs` UDF init.
-  PR: _none yet_ · Merge: _—_
+  PR: #11 (legacy, do not merge) · Merge: _superseded by Tauri migration_
   _Verification: open a WebView2 pane in a workspace, navigate to a heavy site,
   capacity indicator still updates, ticker doesn't double-fire, shutdown clean._
 
 ### Wave 3 — Optional
 
-- [ ] **p6 U5** — Cloud push parity *(optional)*: reuse the macOS
+- **SUPERSEDED p6 U5** — Cloud push parity *(optional)*: reuse the macOS
   `/api/notifications/push` contract verbatim (Bearer auth,
   `{title, subtitle?, body, workspaceId?, surfaceId?, hideContent?}`, same
   size/rate limits) for phone forwarding. Only the device push transport
@@ -211,21 +235,13 @@ touches it — others stay disjoint.
 
 ---
 
-## Recommended serial path (single-session)
+## Active serial path (single-session)
 
-If only one `/ce-work` session is running at a time, work in this order. It
-front-loads cheap wins, keeps the hot `App.xaml.cs` change isolated, and lands
-the WebView2 work only after its packaging contract exists.
-
-1. **res U1** — flip Phase 2 plan status (5 min)
-2. **res U2** — CLI stdin hang fix
-3. **p6 U2** — governor disposal + calibration save-on-exit
-4. **p6 U3** — packaging spike (produces the runtime-bootstrap contract)
-5. **res U3** — tokens migration on the 4 older views
-6. **p6 U1** — renderer polish (engine-only; can also slot in earlier if
-   chrome wave is blocked)
-7. **p6 U4** — WebView2 pane (needs U3)
-8. **p6 U5** — *only on explicit request*
+1. **tauri P3-R1** - pane identity and hook round-trip (current unit).
+2. **tauri P5-M1 + P6-M1** - finish the manual crash/installer release gates.
+3. **tauri P7** - delete the legacy .NET/WinUI stack after both gates pass.
+4. **control-plane orchestration** - session/worktree lifecycle against stable
+   `main` snapshots, then the web read model and observability surface.
 
 ---
 
@@ -234,17 +250,11 @@ the WebView2 work only after its packaging contract exists.
 Run at the start of every session, before R1's reconciliation:
 
 ```powershell
-# Rust engine fresh (regenerates app\Interop\NativeMethods.g.cs)
-& 'C:\Users\steve\.cargo\bin\cargo.exe' build --lib --manifest-path engine\Cargo.toml
-
-# Core tests (floor 238)
-dotnet test tests\Optimus.Core.Tests.csproj
-
-# Engine tests (floor 19)
-& 'C:\Users\steve\.cargo\bin\cargo.exe' test --manifest-path engine\Cargo.toml
-
-# App build — must be 0 warnings, 0 errors
-dotnet build app\Optimus.App.csproj
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+node --test ui/mock/tauri-mock.test.mjs
+npm run build
 ```
 
 A red gate is the end of the unit; fix it before opening a PR.

@@ -11,8 +11,10 @@ crate-type = ["rlib"]
 [dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Security",
     "Win32_System_Console",
+    "Win32_System_Environment",
     "Win32_System_JobObjects",
     "Win32_System_Pipes",
     "Win32_System_Threading",

@@ -14,21 +14,29 @@
 //! reader must drain `output_read` to EOF before handles are closed — not draining
 //! can deadlock (plan §7.2).
 
+use std::cmp::Ordering as CmpOrdering;
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use windows::core::{Result, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, ERROR_BROKEN_PIPE, HANDLE, INVALID_HANDLE_VALUE};
+use windows::core::{Error, Result, PCWSTR, PWSTR};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_BROKEN_PIPE, E_INVALIDARG, HANDLE, INVALID_HANDLE_VALUE,
+};
+use windows::Win32::Globalization::{
+    CompareStringOrdinal, CSTR_EQUAL, CSTR_GREATER_THAN, CSTR_LESS_THAN,
+};
 use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
 use windows::Win32::System::Console::{
     ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
 };
+use windows::Win32::System::Environment::{FreeEnvironmentStringsW, GetEnvironmentStringsW};
 use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
-    InitializeProcThreadAttributeList, UpdateProcThreadAttribute, EXTENDED_STARTUPINFO_PRESENT,
-    LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    InitializeProcThreadAttributeList, UpdateProcThreadAttribute, CREATE_UNICODE_ENVIRONMENT,
+    EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
 /// `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`. Defined locally (value is stable across SDKs)
@@ -64,6 +72,25 @@ impl ConPty {
     ///
     /// `cwd` is the working directory (None → inherit the parent's).
     pub fn spawn(cmdline: &str, cwd: Option<&str>, cols: u16, rows: u16) -> Result<Self> {
+        Self::spawn_with_environment(cmdline, cwd, cols, rows, &[])
+    }
+
+    /// Spawn with child-only environment overrides. The inherited block is copied and merged
+    /// case-insensitively, preserving Windows drive-current-directory entries and all unrelated
+    /// variables. `CreateProcessW` receives a private Unicode block, so the parent never changes.
+    pub fn spawn_with_environment(
+        cmdline: &str,
+        cwd: Option<&str>,
+        cols: u16,
+        rows: u16,
+        environment: &[(String, String)],
+    ) -> Result<Self> {
+        let environment_block = if environment.is_empty() {
+            None
+        } else {
+            Some(merged_environment_block(environment)?)
+        };
+
         unsafe {
             // 1. Pipes. CreatePipe gives (read, write). Defaults are non-inheritable,
             //    which is what ConPTY wants (handles flow via the pseudoconsole attribute).
@@ -133,14 +160,21 @@ impl ConPty {
             };
 
             let mut proc_info = PROCESS_INFORMATION::default();
+            let (creation_flags, environment_ptr) = match environment_block.as_ref() {
+                Some(block) => (
+                    EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                    Some(block.as_ptr().cast::<c_void>()),
+                ),
+                None => (EXTENDED_STARTUPINFO_PRESENT, None),
+            };
             CreateProcessW(
                 PCWSTR::null(),
                 Some(PWSTR(cmdline_w.as_mut_ptr())),
                 None,
                 None,
                 false,
-                EXTENDED_STARTUPINFO_PRESENT,
-                None,
+                creation_flags,
+                environment_ptr,
                 cwd_pcwstr,
                 &si.StartupInfo,
                 &mut proc_info,
@@ -326,4 +360,148 @@ impl std::io::Write for PtyInput {
 
 fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn merged_environment_block(overrides: &[(String, String)]) -> Result<Vec<u16>> {
+    environment_block_from_entries(inherited_environment_entries()?, overrides)
+}
+
+fn inherited_environment_entries() -> Result<Vec<Vec<u16>>> {
+    let environment = unsafe { GetEnvironmentStringsW() };
+    if environment.is_null() {
+        return Err(Error::from_thread());
+    }
+
+    let mut entries = Vec::new();
+    let mut cursor = environment.0;
+    unsafe {
+        while *cursor != 0 {
+            let mut len = 0usize;
+            while *cursor.add(len) != 0 {
+                len += 1;
+            }
+            entries.push(std::slice::from_raw_parts(cursor, len).to_vec());
+            cursor = cursor.add(len + 1);
+        }
+        FreeEnvironmentStringsW(PCWSTR(environment.0))?;
+    }
+    Ok(entries)
+}
+
+fn environment_block_from_entries(
+    mut entries: Vec<Vec<u16>>,
+    overrides: &[(String, String)],
+) -> Result<Vec<u16>> {
+    for (name, value) in overrides {
+        if name.is_empty() || name.contains('=') || name.contains('\0') || value.contains('\0') {
+            return Err(Error::new(
+                E_INVALIDARG,
+                "invalid child environment override",
+            ));
+        }
+
+        let name_wide: Vec<u16> = name.encode_utf16().collect();
+        entries.retain(|entry| {
+            compare_environment_names(environment_name(entry), &name_wide) != CmpOrdering::Equal
+        });
+        entries.push(format!("{name}={value}").encode_utf16().collect());
+    }
+
+    entries.sort_by(|left, right| {
+        compare_environment_names(environment_name(left), environment_name(right))
+    });
+
+    let mut block = Vec::new();
+    for entry in entries {
+        block.extend(entry);
+        block.push(0);
+    }
+    block.push(0);
+    if block.len() == 1 {
+        block.push(0);
+    }
+    Ok(block)
+}
+
+fn environment_name(entry: &[u16]) -> &[u16] {
+    let separator = entry
+        .iter()
+        .enumerate()
+        .skip(usize::from(entry.first() == Some(&(b'=' as u16))))
+        .find_map(|(index, value)| (*value == b'=' as u16).then_some(index))
+        .unwrap_or(entry.len());
+    &entry[..separator]
+}
+
+fn compare_environment_names(left: &[u16], right: &[u16]) -> CmpOrdering {
+    match unsafe { CompareStringOrdinal(left, right, true) } {
+        CSTR_LESS_THAN => CmpOrdering::Less,
+        CSTR_EQUAL => CmpOrdering::Equal,
+        CSTR_GREATER_THAN => CmpOrdering::Greater,
+        _ => left.cmp(right),
+    }
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::*;
+
+    fn wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().collect()
+    }
+
+    fn entries(block: &[u16]) -> Vec<String> {
+        block[..block.len() - 1]
+            .split(|value| *value == 0)
+            .filter(|entry| !entry.is_empty())
+            .map(String::from_utf16_lossy)
+            .collect()
+    }
+
+    #[test]
+    fn environment_block_preserves_inherited_entries_and_overrides_case_insensitively() {
+        let block = environment_block_from_entries(
+            vec![
+                wide("Path=C:\\old"),
+                wide("UNICODE_VALUE=Gr\u{fc}\u{df}e"),
+                wide("\u{dc}BER=old"),
+                wide("=C:=C:\\workspace"),
+            ],
+            &[
+                ("PATH".to_string(), "C:\\new".to_string()),
+                ("OPTIMUS_SURFACE_ID".to_string(), "S9".to_string()),
+                ("\u{fc}ber".to_string(), "new".to_string()),
+            ],
+        )
+        .expect("build environment block");
+
+        assert!(
+            block.ends_with(&[0, 0]),
+            "environment block must be double-NUL terminated"
+        );
+        let entries = entries(&block);
+        let raw_entries: Vec<&[u16]> = block[..block.len() - 1]
+            .split(|value| *value == 0)
+            .filter(|entry| !entry.is_empty())
+            .collect();
+        assert_eq!(
+            String::from_utf16_lossy(raw_entries[0]),
+            "=C:=C:\\workspace",
+            "drive-current-directory entries must sort first"
+        );
+        assert!(
+            raw_entries.windows(2).all(|pair| {
+                compare_environment_names(environment_name(pair[0]), environment_name(pair[1]))
+                    != CmpOrdering::Greater
+            }),
+            "environment entries must be sorted by Windows ordinal-ignore-case name order"
+        );
+        assert!(entries.contains(&"=C:=C:\\workspace".to_string()));
+        assert!(entries.contains(&"UNICODE_VALUE=Gr\u{fc}\u{df}e".to_string()));
+        assert!(entries.contains(&"PATH=C:\\new".to_string()));
+        assert!(entries.contains(&"OPTIMUS_SURFACE_ID=S9".to_string()));
+        assert!(entries.contains(&"\u{fc}ber=new".to_string()));
+        assert!(!entries.iter().any(|entry| entry == "Path=C:\\old"));
+        assert!(!entries.iter().any(|entry| entry == "\u{dc}BER=old"));
+    }
 }
