@@ -1,0 +1,105 @@
+/* Graphite design tokens (from DESIGN.md) as CSS custom properties.
+   Shared by every command-palette tournament variant so they differ only in
+   structure, never in palette. "Evolve Graphite": variants may ADD tokens
+   (prefixed --x-) but must build on these. */
+:root {
+  /* Surfaces — value-step elevation, no blur */
+  --surface-0: #0C0C0C;
+  --surface-1: #121212;
+  --surface-2: #161616;
+  --surface-selected: #2D2D2D;
+  --hairline: #2B2B2B;
+
+  /* Text */
+  --text-primary: #E6E6E6;
+  --text-muted: #8A8A8A;
+  --text-on-accent: #FFFFFF;
+
+  /* Semantic state */
+  --git-branch: #7FB36E;
+  --git-dirty: #D9A04E;
+  --pr-open: #4D9CF0;
+  --pr-merged: #A87FE0;
+  --pr-closed: #D96A6A;
+
+  /* Attention */
+  --attention: #2DD4BF;   /* live / focus */
+  --unread: #D86FB0;      /* unread */
+
+  /* Capacity escalation */
+  --capacity-calm: #8A8A8A;
+  --capacity-warn: #D9A04E;
+  --capacity-cap:  #D96A6A;
+
+  /* Workspace identity hues (hash workspace-id -> index) */
+  --id-0: #5BA3C4; --id-1: #2DD4BF; --id-2: #6FC28C; --id-3: #C49A5B;
+  --id-4: #B07FD9; --id-5: #D97FA8; --id-6: #7F92D9; --id-7: #9FC25B;
+
+  /* Type */
+  --ui: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+  --fs-caption: 10px;
+  --fs-meta: 11px;
+  --fs-body: 12px;
+  --fs-title: 13px;
+
+  /* Spacing (base 4) */
+  --2xs: 2px; --xs: 4px; --sm: 8px; --md: 12px; --lg: 16px; --xl: 24px;
+
+  /* Motion budget */
+  --t-micro: 80ms;
+  --t-short: 200ms;
+  --t-medium: 300ms;
+  --ease-out: cubic-bezier(.2,.7,.3,1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--ui);
+  font-size: var(--fs-body);
+  overflow: hidden;
+}
+
+/* ---- Dimmed Optimus shell behind the overlay (injected by shell.js) ---- */
+#backdrop { position: fixed; inset: 0; display: flex; filter: saturate(.9); }
+.bd-sidebar {
+  width: 230px; background: var(--surface-1);
+  border-right: 1px solid var(--hairline);
+  display: flex; flex-direction: column;
+}
+.bd-side-head {
+  font-size: var(--fs-meta); color: var(--text-muted);
+  padding: var(--md) var(--md) var(--sm); letter-spacing: .04em; text-transform: uppercase;
+}
+.bd-row { padding: var(--sm) var(--md); border-left: 2px solid transparent; }
+.bd-row .t { font-size: var(--fs-title); color: var(--text-primary); }
+.bd-row .m { font-size: var(--fs-meta); color: var(--text-muted); font-family: var(--mono); }
+.bd-cap { margin-top: auto; padding: var(--md); border-top: 1px solid var(--hairline); }
+.bd-cap .lbl { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-muted); }
+.bd-cap .track { height: 4px; background: var(--hairline); margin-top: 6px; border-radius: 2px; }
+.bd-cap .fill { height: 100%; border-radius: 2px; }
+.bd-main { flex: 1; background: var(--surface-0); padding: var(--lg);
+  font-family: var(--mono); font-size: var(--fs-meta); color: #3a3a3a; line-height: 1.7; }
+
+/* Scrim that the palette floats over */
+#scrim { position: fixed; inset: 0; background: rgba(0,0,0,.55); }
+
+/* Generic overlay centering — variants override freely */
+.overlay { position: fixed; inset: 0; display: grid; place-items: start center;
+  padding-top: 12vh; z-index: 10; }
+
+/* Shared key-hint chip */
+.kbd { font-family: var(--mono); font-size: var(--fs-caption);
+  color: var(--text-muted); border: 1px solid var(--hairline);
+  border-radius: 2px; padding: 1px 5px; }
+.hintbar { display: flex; gap: var(--md); align-items: center; flex-wrap: wrap; }
+.hintbar span { font-size: var(--fs-caption); color: var(--text-muted); }
+
+/* Capacity pill used by several variants */
+.cap-pill { display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: var(--fs-meta); }
+.cap-dot { width: 7px; height: 7px; border-radius: 50%; }

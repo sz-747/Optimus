@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>V2 · Two-pane preview — Optimus palette</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /* V2 Two-pane: ranked results left, live detail of the highlighted workspace right.
+     Bet = decide with full context (panes, per-pane RAM, branch/PR) before committing. */
+  .tp { width: 760px; height: 420px; display: grid; grid-template-columns: 320px 1fr;
+        background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 4px;
+        box-shadow: 0 16px 48px rgba(0,0,0,.6); overflow: hidden; }
+  .tp-left { display: flex; flex-direction: column; border-right: 1px solid var(--hairline); }
+  .tp-search { padding: var(--md); border-bottom: 1px solid var(--hairline); display: flex; gap: var(--sm); align-items: center; }
+  .tp-search input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text-primary); font-size: var(--fs-body); }
+  .tp-results { overflow-y: auto; }
+  .tp-r { padding: var(--sm) var(--md); border-left: 2px solid transparent; display: flex; justify-content: space-between; align-items: center; }
+  .tp-r[aria-selected="true"] { background: var(--surface-selected); border-left-color: var(--attention); }
+  .tp-r .n { font-size: var(--fs-title); }
+  .tp-r .c { font-family: var(--mono); font-size: var(--fs-caption); color: var(--text-muted); }
+  .tp-right { padding: var(--lg); display: flex; flex-direction: column; gap: var(--md); }
+  .tp-h { display: flex; align-items: center; gap: var(--sm); }
+  .tp-h .id { width: 10px; height: 10px; border-radius: 2px; }
+  .tp-h h2 { font-size: 18px; font-weight: 600; }
+  .tp-kv { font-family: var(--mono); font-size: var(--fs-meta); color: var(--text-muted); line-height: 1.9; }
+  .tp-kv b { color: var(--text-primary); font-weight: 500; }
+  .tp-panes { display: flex; flex-direction: column; gap: var(--xs); }
+  .tp-pane { display: flex; justify-content: space-between; padding: var(--xs) var(--sm);
+        background: var(--surface-0); border: 1px solid var(--hairline); border-radius: 2px;
+        font-family: var(--mono); font-size: var(--fs-meta); }
+  .tp-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center;
+        padding-top: var(--sm); border-top: 1px solid var(--hairline); }
+  .tp-cap { display: flex; align-items: center; gap: var(--sm); }
+  .tp-track { width: 120px; height: 5px; background: var(--hairline); border-radius: 2px; }
+  .tp-fill { height: 100%; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="overlay" style="place-items:start center;">
+  <div class="tp" role="dialog" aria-label="Command palette">
+    <div class="tp-left">
+      <div class="tp-search"><span class="kbd">⌕</span><input id="q" placeholder="Filter workspaces…" autofocus></div>
+      <div class="tp-results" id="list" role="listbox"></div>
+    </div>
+    <div class="tp-right" id="detail"></div>
+  </div>
+</div>
+<script src="shell.js"></script>
+<script>
+  const O = window.OPTIMUS; let sel = 0, rows = [];
+  function render(q) {
+    rows = O.workspaces.map(w => ({ w, s: O.fuzzy(q.trim(), w.name) })).filter(x => x.s >= 0)
+            .sort((a,b)=>a.s-b.s).map(x=>x.w);
+    sel = Math.min(sel, Math.max(0, rows.length-1));
+    document.getElementById("list").innerHTML = rows.map((w,i)=>`
+      <div class="tp-r" role="option" aria-selected="${i===sel}">
+        <span class="n">${w.name}</span><span class="c">${w.live}/${O.capacity.max}</span>
+      </div>`).join("");
+    detail(rows[sel]);
+  }
+  function detail(w) {
+    const d = document.getElementById("detail");
+    if (!w) { d.innerHTML = `<div class="tp-kv">No match.</div>`; return; }
+    const live = w.live > 0;
+    const panes = live
+      ? Array.from({length:w.live},(_,i)=>`<div class="tp-pane"><span>pane ${i+1} · ${w.title}</span><span style="color:var(--text-muted)">${(0.4+i*0.4).toFixed(1)} GB</span></div>`).join("")
+      : `<div class="tp-pane" style="color:var(--text-muted)">dehydrated · 0 GB live · restores on open</div>`;
+    d.innerHTML = `
+      <div class="tp-h"><span class="id" style="background:${live?`var(${w.hue})`:"var(--hairline)"}"></span><h2>${w.name}</h2></div>
+      <div class="tp-kv">
+        branch <b>${w.branch}</b><br>
+        ${w.pr?`pull request <b style="color:var(--pr-${w.prState})">${w.pr} ${w.prState}</b><br>`:""}
+        focus <b>${w.title}</b><br>
+        live terminals <b>${w.live}</b> · memory <b>${w.ram}</b>
+      </div>
+      <div class="tp-panes">${panes}</div>
+      <div class="tp-foot">
+        <div class="tp-cap">
+          <span class="cap-pill"><span class="cap-dot" style="background:${O.capColor(O.capacity.live)}"></span>
+          <span style="color:${O.capColor(O.capacity.live)}">${O.capacity.live}/${O.capacity.max} safe-zone</span></span>
+          <div class="tp-track"><div class="tp-fill" style="width:${O.capacity.live/O.capacity.max*100}%;background:${O.capColor(O.capacity.live)}"></div></div>
+        </div>
+        <div class="hintbar"><span><span class="kbd">⏎</span> open</span><span><span class="kbd">⇥</span> actions</span></div>
+      </div>`;
+  }
+  document.getElementById("q").addEventListener("input", e=>{ sel=0; render(e.target.value); });
+  document.getElementById("q").addEventListener("keydown", e=>{
+    if(e.key==="ArrowDown"){sel=Math.min(sel+1,rows.length-1);render(q.value);e.preventDefault();}
+    if(e.key==="ArrowUp"){sel=Math.max(sel-1,0);render(q.value);e.preventDefault();}
+  });
+  const q = document.getElementById("q");
+  window.addEventListener("DOMContentLoaded", ()=>render(""));
+</script>
+</body>
+</html>

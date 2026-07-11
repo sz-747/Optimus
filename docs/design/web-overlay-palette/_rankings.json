@@ -1,0 +1,15 @@
+{
+  "variants": ["V1","V2","V3","V4","V5","V6"],
+  "judges": [
+    {"name": "Pragmatic eng lead",        "ranking": ["V1","V6","V4","V3","V2","V5"], "kill": "V5"},
+    {"name": "Impatient first-time user",  "ranking": ["V1","V6","V4","V2","V3","V5"], "kill": "V5"},
+    {"name": "Support lead",               "ranking": ["V4","V1","V5","V6","V3","V2"], "kill": "V2"},
+    {"name": "Competitor PM",              "ranking": ["V4","V6","V1","V2","V3","V5"], "kill": "V5"},
+    {"name": "Accessibility design critic","ranking": ["V1","V4","V5","V2","V6","V3"], "kill": "V3"}
+  ],
+  "criterion_violations": {
+    "V2": ["Pragmatic eng lead", "Support lead"],
+    "V3": ["Pragmatic eng lead", "Support lead", "Accessibility design critic"],
+    "V5": ["Pragmatic eng lead", "Impatient first-time user"]
+  }
+}

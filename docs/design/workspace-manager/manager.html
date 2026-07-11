@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Optimus · workspace manager — agent chat (Graphite)</title>
+<!-- Same Graphite tokens as the command-palette tournament: one palette, no drift. -->
+<link rel="stylesheet" href="../web-overlay-palette/tokens.css">
+<style>
+  /* SHOWS the ideation survivors on the native Optimus shell, reframed:
+     LEFT = session list (dark-cockpit, work-state groups, capacity dock)  [retractable]
+     CENTER = the selected agent's back-and-forth chat
+     RIGHT = per-session inspector (resume note, since-you-were-away, digest) [retractable]
+     Built only on DESIGN.md "Graphite" tokens — no new base hues, no blur. */
+
+  html, body { overflow: hidden; }
+  body { height: 100vh; display: flex; flex-direction: column; }
+
+  /* ---- demo toolbar (mockup controls only, not the product) ---- */
+  .demobar { display:flex; align-items:center; gap:var(--md); padding:var(--sm) var(--lg);
+    background:var(--surface-2); border-bottom:1px solid var(--hairline); font-size:var(--fs-meta); }
+  .demobar .brand { font-weight:600; color:var(--text-primary); letter-spacing:.02em; }
+  .demobar .brand b { color:var(--attention); }
+  .demobar .spacer { flex:1; }
+  .seg { display:inline-flex; border:1px solid var(--hairline); border-radius:2px; overflow:hidden; }
+  .seg button { background:transparent; color:var(--text-muted); border:0; cursor:pointer;
+    font-family:var(--mono); font-size:var(--fs-caption); letter-spacing:.06em; padding:4px 10px; text-transform:uppercase; }
+  .seg button[aria-pressed="true"] { background:var(--surface-selected); color:var(--text-primary); }
+  .tog { background:transparent; border:1px solid var(--hairline); border-radius:2px; color:var(--text-muted);
+    font-family:var(--mono); font-size:var(--fs-caption); padding:4px 10px; cursor:pointer; text-transform:uppercase; letter-spacing:.06em; }
+  .tog[aria-pressed="true"] { color:var(--attention); border-color:var(--attention); }
+
+  /* ---- window: three columns ---- */
+  .win { flex:1; display:flex; min-height:0; position:relative; }
+
+  /* ===== LEFT: session list (mission control) ===== */
+  .sidebar { flex:0 0 272px; background:var(--surface-1); border-right:1px solid var(--hairline);
+    display:flex; flex-direction:column; min-height:0; overflow:hidden; transition:flex-basis var(--t-medium) var(--ease-out); }
+  body.left-collapsed .sidebar { flex-basis:0; border-right:0; }
+  .side-head { display:flex; align-items:center; gap:var(--sm); padding:var(--md) var(--md) var(--sm); }
+  .side-head .crumb { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted);
+    text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; }
+  .side-head .crumb b { color:var(--text-primary); font-weight:600; }
+  .side-head .collapse { margin-left:auto; background:transparent; border:0; color:var(--text-muted); cursor:pointer; font-size:13px; }
+  .side-scroll { flex:1; overflow-y:auto; }
+
+  .grp { padding:var(--sm) var(--md) var(--2xs); display:flex; align-items:center; gap:var(--xs);
+    font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); text-transform:uppercase;
+    letter-spacing:.07em; cursor:pointer; user-select:none; border-top:1px solid var(--hairline); margin-top:var(--2xs); }
+  .grp:first-child { border-top:0; margin-top:0; }
+  .grp .chev { width:8px; } .grp .gc { margin-left:auto; }
+  .grp.progress .gn { color:var(--text-primary); }
+
+  .row { display:grid; grid-template-columns:2px 1fr auto; gap:var(--sm);
+    padding:var(--sm) var(--md) var(--sm) var(--lg); cursor:pointer; position:relative; }
+  .row .spine { width:2px; align-self:stretch; border-radius:1px; opacity:.28; }
+  .row .l1 { display:flex; align-items:baseline; gap:6px; }
+  .row .branch { font-family:var(--mono); font-size:var(--fs-meta); }
+  .row .branch.clean { color:var(--git-branch); } .row .branch.dirty { color:var(--git-dirty); } .row .branch.merged { color:var(--pr-merged); }
+  .row .l2 { display:flex; align-items:center; gap:6px; margin-top:3px; flex-wrap:wrap; }
+  .row .meta { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); }
+  .row .pr { font-family:var(--mono); font-size:var(--fs-caption); padding:0 4px; border-radius:2px; }
+  .row .pr.open { color:var(--pr-open); border:1px solid color-mix(in srgb,var(--pr-open) 45%,transparent); }
+  .row .pr.merged { color:var(--pr-merged); border:1px solid color-mix(in srgb,var(--pr-merged) 45%,transparent); }
+  .st { font-family:var(--mono); font-size:var(--fs-caption); padding:0 5px; border-radius:2px; color:var(--text-muted); background:var(--surface-2); }
+  .st.busy { color:var(--text-primary); } .st.done { color:var(--git-branch); }
+  .st.waiting { color:var(--attention); background:color-mix(in srgb,var(--attention) 16%,transparent); }
+  .st.error { color:var(--pr-closed); background:color-mix(in srgb,var(--pr-closed) 16%,transparent); }
+  .ago { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); white-space:nowrap; }
+  .row.selected { background:var(--surface-selected); } .row.selected .spine { opacity:1; }
+  .row.exc { background:color-mix(in srgb,var(--surface-2) 70%,transparent); } .row.exc .spine { opacity:1; }
+  .row.exc.waiting { box-shadow:inset 2px 0 0 var(--attention); }
+  .row.exc.error { box-shadow:inset 2px 0 0 var(--pr-closed); }
+  .row.parked { opacity:.5; }
+  .row .unread { width:6px; height:6px; border-radius:50%; background:var(--unread); align-self:center; }
+
+  .newws { margin:var(--sm) var(--md) 0; padding:var(--sm); text-align:center; border:1px dashed var(--hairline);
+    border-radius:2px; color:var(--text-muted); font-size:var(--fs-meta); cursor:pointer; white-space:nowrap; }
+  .cap { padding:var(--md); border-top:1px solid var(--hairline); position:relative; }
+  .cap .l { display:flex; align-items:baseline; justify-content:space-between; font-family:var(--mono); font-size:var(--fs-meta); }
+  .cap .l .n { color:var(--capacity-warn); } .cap .l .wip { color:var(--text-muted); }
+  .cap .track { position:relative; height:6px; background:var(--hairline); border-radius:3px; margin-top:6px; }
+  .cap .fill { position:absolute; left:0; top:0; bottom:0; border-radius:3px; background:var(--capacity-warn); width:87.5%; }
+  .cap .wiptick { position:absolute; top:-3px; bottom:-3px; width:2px; left:37.5%; background:var(--attention); }
+  .cap .wiptick::after { content:"WIP 3"; position:absolute; top:-13px; left:-12px; font-family:var(--mono); font-size:9px; color:var(--attention); white-space:nowrap; }
+  .cap .legend { margin-top:10px; font-family:var(--mono); font-size:9px; color:var(--text-muted); line-height:1.5; }
+
+  /* reopen handles for collapsed panes */
+  .handle { position:absolute; top:50%; transform:translateY(-50%); width:16px; height:64px;
+    background:var(--surface-2); border:1px solid var(--hairline); display:none; place-items:center;
+    cursor:pointer; color:var(--text-muted); font-size:11px; z-index:6; }
+  .handle.left { left:0; border-left:0; border-radius:0 4px 4px 0; }
+  .handle.right { right:0; border-right:0; border-radius:4px 0 0 4px; }
+  body.left-collapsed .handle.left { display:grid; }
+  body.right-collapsed .handle.right { display:grid; }
+
+  /* ===== CENTER: agent chat ===== */
+  .chat { flex:1; min-width:0; background:var(--surface-0); display:flex; flex-direction:column; }
+  .chat-head { display:flex; align-items:center; gap:var(--sm); padding:var(--sm) var(--lg);
+    background:var(--surface-2); border-bottom:1px solid var(--hairline); }
+  .chat-head .sp { width:9px; height:9px; border-radius:2px; }
+  .chat-head .nm { font-size:var(--fs-title); color:var(--text-primary); font-weight:600; }
+  .chat-head .br { font-family:var(--mono); font-size:var(--fs-meta); color:var(--git-dirty); }
+  .chat-head .right { margin-left:auto; display:flex; gap:var(--sm); align-items:center; }
+
+  .thread { flex:1; overflow-y:auto; padding:var(--lg) var(--xl) 0; }
+  .thread .max { max-width:760px; margin:0 auto; padding-bottom:var(--xl); }
+
+  /* catch-up banner (Survivor A) — in-context "since you were away" */
+  .catchup { background:var(--surface-1); border:1px solid var(--hairline); border-left:2px solid var(--attention);
+    border-radius:0 2px 2px 0; padding:var(--sm) var(--md); margin-bottom:var(--lg); position:relative; }
+  .catchup .ct { font-family:var(--mono); font-size:var(--fs-caption); color:var(--attention); text-transform:uppercase; letter-spacing:.06em; display:flex; }
+  .catchup .ct .x { margin-left:auto; cursor:pointer; color:var(--text-muted); }
+  .catchup ul { margin-top:var(--xs); }
+  .catchup li { list-style:none; font-family:var(--mono); font-size:var(--fs-meta); color:var(--text-muted); padding:2px 0; display:flex; gap:var(--sm); }
+  .catchup li b { color:var(--text-primary); font-weight:400; }
+
+  /* ---- a turn (one prompt or one agent reply) ---- */
+  .turn { padding:var(--lg) 0 var(--md); }
+  .turn + .turn, .turn + .op, .op + .turn { border-top:1px solid color-mix(in srgb,var(--hairline) 45%,transparent); }
+  .role { display:flex; align-items:center; gap:var(--sm); margin-bottom:var(--sm); }
+  .role .av { width:20px; height:20px; border-radius:2px; flex:none; display:grid; place-items:center;
+    font-family:var(--mono); font-size:11px; font-weight:700; }
+  .role .nm { font-family:var(--mono); font-size:var(--fs-caption); text-transform:uppercase; letter-spacing:.06em; }
+  .role .t { margin-left:auto; font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); }
+
+  .turn.you .av { background:var(--surface-selected); color:var(--text-primary); }
+  .turn.you .nm { color:var(--text-muted); }
+  .turn.you .bubble { background:var(--surface-1); border:1px solid var(--hairline); border-radius:2px;
+    padding:var(--sm) var(--md); font-size:var(--fs-body); line-height:1.6; color:var(--text-primary); }
+
+  .turn.agent .av { color:var(--surface-0); }       /* bg = identity hue, set inline */
+  .turn.agent .nm { color:var(--text-primary); }
+  /* agent prose — how a real Claude reply lays out (markdown roles) */
+  .prose { font-size:var(--fs-body); line-height:1.65; color:var(--text-primary); }
+  .prose > :first-child { margin-top:0; } .prose > :last-child { margin-bottom:0; }
+  .prose p { margin:0 0 var(--md); }
+  .prose h3, .prose h4 { font-size:var(--fs-title); font-weight:600; color:var(--text-primary);
+    letter-spacing:.01em; margin:var(--lg) 0 var(--sm); }
+  .prose ul, .prose ol { margin:0 0 var(--md); padding-left:var(--lg); }
+  .prose li { margin:3px 0; line-height:1.6; }
+  .prose li::marker { color:var(--text-muted); }
+  .prose strong, .prose b { color:var(--text-primary); font-weight:600; }
+  .prose code { font-family:var(--mono); font-size:var(--fs-meta); background:var(--surface-2);
+    border:1px solid var(--hairline); border-radius:2px; padding:0 4px; }
+  .prose pre { background:var(--surface-1); border:1px solid var(--hairline); border-radius:2px;
+    padding:var(--sm) var(--md); overflow-x:auto; margin:0 0 var(--md); }
+  .prose pre code { background:none; border:0; padding:0; font-size:var(--fs-meta); line-height:1.55; display:block; }
+  .prose pre .cm { color:var(--text-muted); } .prose pre .kw { color:var(--pr-merged); }
+  .prose blockquote { border-left:2px solid var(--hairline); margin:0 0 var(--md);
+    padding:2px 0 2px var(--md); color:var(--text-muted); }
+  .prose a { color:var(--pr-open); text-decoration:none; }
+
+  /* collapsible reasoning */
+  .think { margin:0 0 var(--sm); }
+  .think summary { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); cursor:pointer;
+    list-style:none; display:flex; gap:6px; align-items:center; }
+  .think summary::-webkit-details-marker { display:none; }
+  .think summary::before { content:"▸"; transition:transform var(--t-micro); }
+  .think[open] summary::before { transform:rotate(90deg); }
+  .think .tk { margin:6px 0 0 6px; padding-left:var(--md); border-left:1px solid var(--hairline);
+    color:var(--text-muted); font-size:var(--fs-meta); line-height:1.6; font-style:italic; }
+
+  /* tool-op card — the work the agent ran */
+  .op { border:1px solid var(--hairline); border-radius:2px; background:var(--surface-1); margin:var(--sm) 0; overflow:hidden; }
+  .op-h { display:flex; align-items:center; gap:var(--sm); padding:6px var(--md); font-family:var(--mono); font-size:var(--fs-meta); }
+  .op-h .verb { color:var(--text-primary); font-weight:600; }
+  .op-h .tgt { color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .op-h .stat { margin-left:auto; flex:none; font-size:var(--fs-caption); }
+  .op-h .stat.ok { color:var(--git-branch); } .op-h .stat.run { color:var(--attention); } .op-h .stat.fail { color:var(--pr-closed); }
+  .op-out { border-top:1px solid var(--hairline); padding:var(--sm) var(--md); font-family:var(--mono);
+    font-size:var(--fs-meta); color:var(--text-muted); white-space:pre-wrap; line-height:1.5; }
+  .op-out .fail { color:var(--pr-closed); } .op-out .ok { color:var(--git-branch); }
+  .diff { border-top:1px solid var(--hairline); font-family:var(--mono); font-size:var(--fs-meta); padding:var(--xs) 0; }
+  .diff .dl { display:flex; padding:1px var(--md); line-height:1.55; }
+  .diff .gut { width:14px; flex:none; opacity:.7; }
+  .diff .dl.ctx { color:var(--text-muted); }
+  .diff .dl.add { background:color-mix(in srgb,var(--git-branch) 11%,transparent); color:var(--git-branch); }
+  .diff .dl.del { background:color-mix(in srgb,var(--pr-closed) 11%,transparent); color:var(--pr-closed); }
+
+  /* decision card — the "waiting · needs input" moment, made first-class */
+  .ask { border:1px solid var(--attention); border-radius:2px; background:color-mix(in srgb,var(--attention) 7%,transparent);
+    padding:var(--md); margin-top:var(--md); }
+  .ask .at { font-family:var(--mono); font-size:var(--fs-caption); text-transform:uppercase; letter-spacing:.06em;
+    color:var(--attention); margin-bottom:var(--sm); display:flex; gap:6px; align-items:center; }
+  .ask .aq { font-size:var(--fs-body); color:var(--text-primary); line-height:1.5; margin-bottom:var(--sm); }
+  .ask .opts { display:flex; flex-direction:column; gap:5px; margin-bottom:var(--md); }
+  .ask .opt { font-size:var(--fs-meta); color:var(--text-muted); line-height:1.5; }
+  .ask .opt b { color:var(--text-primary); font-weight:600; font-family:var(--mono); margin-right:6px; }
+  .decide { display:flex; gap:var(--sm); }
+  .decide button { font-family:var(--mono); font-size:var(--fs-meta); padding:5px 14px; border-radius:2px; cursor:pointer; border:1px solid var(--hairline); background:var(--surface-1); color:var(--text-primary); }
+  .decide button.approve { border-color:var(--git-branch); color:var(--git-branch); }
+  .decide button.reject { border-color:var(--pr-closed); color:var(--pr-closed); }
+
+  /* live "agent is working" footer (busy sessions) */
+  .live { display:flex; align-items:center; gap:var(--sm); padding:var(--lg) 0; font-family:var(--mono);
+    font-size:var(--fs-meta); color:var(--text-muted); border-top:1px solid color-mix(in srgb,var(--hairline) 45%,transparent); }
+  .live .pulse { width:7px; height:7px; border-radius:50%; background:var(--attention); animation:pulse 1.4s ease-in-out infinite; }
+  .live b { color:var(--text-primary); font-weight:400; }
+  .live .car { width:6px; height:13px; background:var(--attention); animation:blink 1s step-end infinite; }
+  @keyframes pulse { 0%,100%{opacity:.25} 50%{opacity:1} }
+  @keyframes blink { 50%{opacity:0} }
+
+  /* composer */
+  .composer { border-top:1px solid var(--hairline); background:var(--surface-1); padding:var(--md) var(--xl); }
+  .composer .max { max-width:760px; margin:0 auto; }
+  .cbox { background:var(--surface-0); border:1px solid var(--hairline); border-radius:2px; padding:var(--sm) var(--md); }
+  .cbox:focus-within { border-color:color-mix(in srgb,var(--attention) 55%,var(--hairline)); }
+  .cbox input { width:100%; background:transparent; border:0; outline:0; color:var(--text-primary);
+    font-family:var(--ui); font-size:var(--fs-body); padding:3px 0; }
+  .cbox input::placeholder { color:var(--text-muted); }
+  .cfoot { display:flex; align-items:center; gap:var(--sm); margin-top:var(--sm); }
+  .chip { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); border:1px solid var(--hairline); border-radius:2px; padding:2px 7px; }
+  .cfoot .hint { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); }
+  .cfoot .send { margin-left:auto; font-family:var(--mono); font-size:var(--fs-caption); color:var(--surface-0);
+    background:var(--attention); border-radius:2px; padding:4px 12px; }
+
+  .notspawned { display:grid; place-items:center; height:100%; text-align:center; color:var(--text-muted); }
+  .notspawned .big { font-size:var(--fs-title); color:var(--text-primary); margin-bottom:var(--sm); }
+  .notspawned .start { margin-top:var(--md); border:1px solid var(--attention); color:var(--attention); border-radius:2px; padding:6px 16px; font-family:var(--mono); font-size:var(--fs-meta); cursor:pointer; }
+
+  /* ===== RIGHT: inspector ===== */
+  .inspector { flex:0 0 304px; background:var(--surface-1); border-left:1px solid var(--hairline);
+    display:flex; flex-direction:column; min-height:0; overflow:hidden; transition:flex-basis var(--t-medium) var(--ease-out); }
+  body.right-collapsed .inspector { flex-basis:0; border-left:0; }
+  .insp-head { display:flex; align-items:center; padding:var(--md) var(--md) var(--sm); }
+  .insp-head .h { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); text-transform:uppercase; letter-spacing:.06em; }
+  .insp-head .collapse { margin-left:auto; background:transparent; border:0; color:var(--text-muted); cursor:pointer; font-size:13px; }
+  .insp-scroll { flex:1; min-height:0; overflow:hidden; padding:var(--md);
+    display:flex; flex-direction:column; gap:var(--sm); }
+  .insp-id { display:flex; align-items:center; gap:var(--sm); padding:var(--sm) 0; }
+  .insp-id .sp { width:9px; height:9px; border-radius:2px; }
+  .insp-id .nm { font-size:var(--fs-title); color:var(--text-primary); }
+  .insp-row { display:flex; justify-content:space-between; font-family:var(--mono); font-size:var(--fs-meta); color:var(--text-muted); padding:3px 0; }
+  .insp-row b { color:var(--text-primary); font-weight:400; }
+  .insp-sec { margin-top:var(--md); padding-top:var(--md); border-top:1px solid var(--hairline); }
+  .insp-sec .lbl { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:var(--xs); }
+  .resume-note { background:var(--surface-2); border-left:2px solid var(--attention); border-radius:0 2px 2px 0; padding:var(--sm) var(--md); }
+  .resume-note .v { font-size:var(--fs-body); color:var(--text-primary); line-height:1.5; }
+  .lane .item { display:flex; align-items:center; gap:var(--sm); padding:3px 0; font-family:var(--mono); font-size:var(--fs-meta); color:var(--text-muted); }
+  .lane .item .dot { width:6px; height:6px; border-radius:50%; flex:none; }
+  .lane .item b { color:var(--text-primary); font-weight:400; }
+  .lane .ln { font-family:var(--mono); font-size:9px; letter-spacing:.06em; text-transform:uppercase; margin:var(--sm) 0 var(--2xs); }
+  .lane.immediate .ln { color:var(--pr-closed); } .lane.pooled .ln { color:var(--text-muted); }
+
+  /* ===== RIGHT pane: two panels (PR/changes + live terminal) filling the pane ===== */
+  .cap-badge.inl { position:static; box-shadow:none; flex:none; }
+
+  /* top panel — PR header + file changes */
+  .gh-pane { flex:1 1 42%; min-height:0; display:flex; flex-direction:column; overflow:hidden;
+    border:1px solid var(--hairline); border-radius:2px; background:var(--surface-1); }
+  .gh-id { display:flex; align-items:center; gap:var(--sm); padding:var(--sm) var(--sm) var(--xs); }
+  .gh-id .sp { width:9px; height:9px; border-radius:2px; flex:none; }
+  .gh-id .nm { font-size:var(--fs-title); color:var(--text-primary); }
+  .gh-id .gh-branch { font-family:var(--mono); font-size:var(--fs-caption); margin-left:auto; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .gh-id .gh-branch.clean { color:var(--git-branch); } .gh-id .gh-branch.dirty { color:var(--git-dirty); } .gh-id .gh-branch.merged { color:var(--pr-merged); }
+
+  .gh-head { display:flex; align-items:center; gap:var(--sm); flex-wrap:wrap;
+    padding:var(--sm); background:var(--surface-2); border-top:1px solid var(--hairline); border-bottom:1px solid var(--hairline); }
+  .gh-head .gh-pr { font-family:var(--mono); font-size:var(--fs-meta); color:var(--text-primary); }
+  .gh-head .gh-pr.none { color:var(--text-muted); }
+  .gh-state { font-family:var(--mono); font-size:var(--fs-caption); text-transform:uppercase; letter-spacing:.05em; padding:1px 6px; border-radius:2px; }
+  .gh-state.ready { color:var(--git-branch); background:color-mix(in srgb,var(--git-branch) 15%,transparent); }
+  .gh-state.conflict { color:var(--pr-closed); background:color-mix(in srgb,var(--pr-closed) 15%,transparent); }
+  .gh-state.checks { color:var(--attention); background:color-mix(in srgb,var(--attention) 15%,transparent); }
+  .gh-state.merged { color:var(--pr-merged); background:color-mix(in srgb,var(--pr-merged) 15%,transparent); }
+  .gh-state.none { color:var(--text-muted); background:var(--surface-1); }
+  .gh-merge { margin-left:auto; font-family:var(--mono); font-size:var(--fs-caption); padding:4px 12px; border-radius:2px; cursor:pointer;
+    border:0; background:var(--git-branch); color:var(--surface-0); font-weight:600; }
+  .gh-merge.open { background:transparent; border:1px solid var(--hairline); color:var(--text-primary); font-weight:400; }
+  .gh-merge.dis { background:var(--surface-1); border:1px solid var(--hairline); color:var(--text-muted); cursor:not-allowed; }
+  .gh-merged { margin-left:auto; font-family:var(--mono); font-size:var(--fs-caption); color:var(--pr-merged); }
+
+  .gh-scroll { flex:1; min-height:0; overflow-y:auto; padding:0 var(--sm) var(--sm); }
+  .gh-tabs { display:flex; gap:var(--md); margin:0 0 var(--xs); border-bottom:1px solid var(--hairline);
+    position:sticky; top:0; background:var(--surface-1); padding-top:var(--sm); z-index:1; }
+  .gh-tab { background:transparent; border:0; border-bottom:2px solid transparent; cursor:pointer; padding:5px 0; margin-bottom:-1px;
+    font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); }
+  .gh-tab.sel { color:var(--text-primary); border-bottom-color:var(--attention); }
+
+  .gh-conflict { font-family:var(--mono); font-size:var(--fs-caption); color:var(--pr-closed);
+    background:color-mix(in srgb,var(--pr-closed) 10%,transparent); border:1px solid color-mix(in srgb,var(--pr-closed) 35%,transparent);
+    border-radius:2px; padding:5px var(--sm); margin:var(--sm) 0; line-height:1.5; }
+
+  .gh-files { display:flex; flex-direction:column; }
+  .gh-file { display:flex; align-items:center; gap:var(--sm); padding:5px 2px; border-bottom:1px solid color-mix(in srgb,var(--hairline) 55%,transparent); }
+  .gh-file.conf { background:color-mix(in srgb,var(--pr-closed) 7%,transparent); }
+  .gh-path { flex:1; min-width:0; font-family:var(--mono); font-size:var(--fs-meta); color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .gh-path .gh-dir { color:var(--text-muted); }
+  .gh-cnt { flex:none; display:flex; gap:6px; align-items:center; font-family:var(--mono); font-size:var(--fs-caption); }
+  .gh-cnt .add { color:var(--git-branch); } .gh-cnt .del { color:var(--pr-closed); } .gh-cnt .cf { color:var(--pr-closed); }
+  .gh-empty { flex:1; display:grid; place-items:center; text-align:center; font-family:var(--mono); font-size:var(--fs-meta); color:var(--text-muted); line-height:1.7; padding:var(--md); }
+
+  /* bottom panel — live terminal you can type into */
+  .term-pane { flex:1 1 58%; min-height:0; display:flex; flex-direction:column; overflow:hidden;
+    border:1px solid var(--hairline); border-radius:2px; background:var(--surface-0); }
+  .term-head { display:flex; align-items:center; gap:var(--sm); padding:5px var(--sm);
+    background:var(--surface-2); border-bottom:1px solid var(--hairline); }
+  .term-head .rh { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-primary); }
+  .term-head button { background:transparent; border:1px solid var(--hairline); border-radius:2px; color:var(--text-muted);
+    font-family:var(--mono); font-size:9px; padding:2px 7px; cursor:pointer; }
+  .term-head button.run-tab { color:var(--git-branch); border-color:color-mix(in srgb,var(--git-branch) 45%,transparent); }
+  .term-head .sp1 { margin-left:auto; }
+  .term-body { flex:1; min-height:0; overflow-y:auto; padding:var(--sm); cursor:text; }
+  .term-body .rl { font-family:var(--mono); font-size:var(--fs-caption); color:var(--text-muted); line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+  .term-body .rl.err { color:var(--pr-closed); } .term-body .rl.ok { color:var(--git-branch); } .term-body .rl.cmd { color:var(--text-primary); }
+  .term-prompt { display:flex; align-items:center; gap:6px; padding:6px var(--sm); border-top:1px solid var(--hairline); background:var(--surface-0); }
+  .term-prompt .ps { font-family:var(--mono); font-size:var(--fs-caption); color:var(--git-branch); flex:none; white-space:nowrap; }
+  .term-prompt input { flex:1; min-width:0; background:transparent; border:0; outline:0; color:var(--text-primary);
+    font-family:var(--mono); font-size:var(--fs-caption); padding:1px 0; caret-color:var(--attention); }
+  .term-prompt input::placeholder { color:var(--text-muted); }
+
+  /* annotations */
+  .cap-badge { position:absolute; z-index:20; width:18px; height:18px; border-radius:50%; background:var(--attention);
+    color:var(--surface-0); font-family:var(--mono); font-weight:700; font-size:11px; display:grid; place-items:center; box-shadow:0 0 0 3px var(--surface-0); }
+  body:not(.annot) .cap-badge { display:none; }
+  .legendpanel { position:fixed; right:0; top:41px; bottom:0; width:300px; z-index:30; background:var(--surface-1);
+    border-left:1px solid var(--hairline); padding:var(--lg); overflow-y:auto; transform:translateX(100%); transition:transform var(--t-medium) var(--ease-out); box-shadow:-16px 0 48px rgba(0,0,0,.5); }
+  body.annot .legendpanel { transform:none; }
+  .legendpanel h2 { font-size:var(--fs-title); margin-bottom:var(--sm); }
+  .legendpanel .li { display:flex; gap:var(--sm); padding:var(--sm) 0; border-top:1px solid var(--hairline); }
+  .legendpanel .li .num { width:18px; height:18px; border-radius:50%; flex:none; background:var(--attention); color:var(--surface-0); font-family:var(--mono); font-weight:700; font-size:11px; display:grid; place-items:center; }
+  .legendpanel .li .t { font-size:var(--fs-meta); color:var(--text-primary); }
+  .legendpanel .li .t .ax { font-family:var(--mono); font-size:9px; color:var(--attention); text-transform:uppercase; }
+  .legendpanel .li .t p { color:var(--text-muted); margin-top:2px; }
+  .legendpanel .note2 { margin-top:var(--md); font-family:var(--mono); font-size:9px; color:var(--text-muted); line-height:1.6; }
+</style>
+</head>
+<body class="annot">
+
+<div class="demobar">
+  <span class="brand"><b>◆</b> Optimus · workspace manager</span>
+  <button class="tog" id="t-left" aria-pressed="true">◧ Sessions</button>
+  <span class="spacer"></span>
+  <span class="seg" id="altitude">
+    <button data-alt="phase" aria-pressed="true">Phase</button>
+    <button data-alt="task" aria-pressed="false">Task</button>
+  </span>
+  <button class="tog" id="t-annot" aria-pressed="true">Annotate</button>
+  <button class="tog" id="t-right" aria-pressed="true">GitHub ◨</button>
+</div>
+
+<div class="win">
+  <!-- reopen handles -->
+  <div class="handle left" id="h-left">▸</div>
+  <div class="handle right" id="h-right">◂</div>
+
+  <!-- ================= LEFT: sessions ================= -->
+  <aside class="sidebar">
+    <div class="side-head">
+      <span class="crumb" id="crumb"><b>PHASE</b> · all sessions</span>
+      <button class="collapse" id="c-left" title="retract">◧</button>
+    </div>
+    <div class="side-scroll" id="scroll"><!-- rows injected --></div>
+    <div class="newws">+ New session</div>
+    <div class="cap">
+      <span class="cap-badge" style="left:-9px; top:-9px">3</span>
+      <div class="l"><span class="n">7 / 8 terminals</span><span class="wip">attention 5 / 3</span></div>
+      <div class="track"><div class="fill"></div><div class="wiptick"></div></div>
+      <div class="legend">amber = ≥75% of RAM safe-zone · teal tick = cognitive WIP cap (3).<br>5 active &gt; 3 → park the coldest to stay in your head.</div>
+    </div>
+  </aside>
+
+  <!-- ================= CENTER: chat ================= -->
+  <main class="chat">
+    <div class="chat-head">
+      <span class="sp" id="ch-sp"></span>
+      <span class="nm" id="ch-nm">—</span>
+      <span class="br" id="ch-br"></span>
+      <span class="right"><span class="st" id="ch-st"></span><span class="ago" id="ch-ago"></span></span>
+    </div>
+    <div class="thread" id="thread"><div class="max" id="threadmax"></div></div>
+    <div class="composer"><div class="max">
+      <div class="cbox"><input id="composer-input" placeholder="Reply to this session…" autocomplete="off"></div>
+      <div class="cfoot">
+        <span class="chip">◆ claude-opus-4-8</span>
+        <span class="chip">auto</span>
+        <span class="hint">⏎ send · ⇧⏎ newline</span>
+        <span class="send">Send ▸</span>
+      </div>
+    </div></div>
+  </main>
+
+  <!-- ================= RIGHT: inspector ================= -->
+  <aside class="inspector">
+    <div class="insp-head">
+      <span class="h">GitHub · changes</span>
+      <button class="collapse" id="c-right" title="retract">◨</button>
+    </div>
+    <div class="insp-scroll" id="insp"><!-- injected --></div>
+  </aside>
+</div>
+
+<aside class="legendpanel">
+  <h2>What you're looking at</h2>
+  <div class="li"><span class="num">1</span><span class="t"><span class="ax">B · attention</span> Dark-cockpit list — only <b>waiting</b> (teal) &amp; <b>error</b> (red) light up; the rest stay near-black. Click any session to load its chat.<p>Identity spine dims to .28 when nominal, full when it earns your eye.</p></span></div>
+  <div class="li"><span class="num">2</span><span class="t"><span class="ax">A · resumption</span> Catch-up banner — "since you were away" pinned atop the thread when you re-enter a session. Dismissible.</span></div>
+  <div class="li"><span class="num">3</span><span class="t"><span class="ax">E · session model</span> Capacity dock — shipped RAM indicator (7/8 amber) + teal <b>WIP tick</b> at 3. Box vs. attention, one widget.</span></div>
+  <div class="li"><span class="num">4</span><span class="t"><span class="ax">git · review</span> GitHub pane — the selected session's PR: per-file <b>+/−</b> churn, <b>merge-conflict</b> vs <b>ready-to-merge</b> state, and a one-click <b>Merge</b>.<p>State drives the action — green Merge when clean, disabled "Resolve first" on conflict, "Open PR" when there's no PR yet, "merged" once shipped.</p></span></div>
+  <div class="li"><span class="num">5</span><span class="t"><span class="ax">terminal</span> Live terminal — a full panel wired to the session's PTY that you can <b>type into</b> (try <code>git status</code>, <code>ls</code>, <code>clear</code>), not a read-only box. Fills the lower half of the pane.</span></div>
+  <div class="li"><span class="num">6</span><span class="t"><span class="ax">C · altitude</span> Phase ↔ Task toggle + retractable panes (◧ / ◨). Task hoists into one session's surfaces.</span></div>
+  <div class="note2">Foundation (Survivor 6) is invisible but everywhere: <b>LastFocusedAt</b> (2m/12m/1h + the banner window), <b>GroupKey</b> (the Done / In review / In progress groups), <b>surface-keyed structured state</b> (busy/waiting/error/done chips). The right pane is now GitHub/PR management — the resume note (A) survives as the catch-up banner; the two-lane digest (D) moves to the notification center. All color is a DESIGN.md token. No blur.</div>
+</aside>
+
+<script>
+  const H = id => `var(${id})`;
+  // ----- mock session data -----
+  const SESS = {
+    vienna: { name:"vienna", branch:"feat/auth-rotation", bcls:"dirty", hue:"--id-4", group:"planning",
+      state:"queued", st:"queued", ago:"—", spawned:false },
+    lima:   { name:"lima", branch:"docs/onboarding", bcls:"clean", hue:"--id-7", group:"planning",
+      state:"queued", st:"queued", ago:"—", spawned:false },
+    tokyo:  { name:"tokyo", branch:"feat/safe-zone-meter", bcls:"clean", hue:"--id-1", group:"ongoing",
+      st:"claude · editing", stcls:"busy", ago:"2m",
+      note:"Wire the WIP tick to CapacityModel and re-render on capacity events.",
+      working:{verb:"Edit", target:"CapacityIndicatorView.cs"},
+      msgs:[
+        {role:"you",t:"09:02",body:"Add the cognitive WIP tick to the capacity meter at floor(safe-zone / 3)."},
+        {role:"agent",t:"09:03",body:"Adding a WipCap derived value, then drawing an inner tick on the capacity bar at that slot."},
+        {role:"tool",t:"09:05",verb:"Edit",target:"app/Chrome/CapacityIndicatorView.cs",status:"ok",
+          diff:[["ctx","DrawFill(rect, pct, Tokens.CapacityWarn);"],["add","var wip = Tokens.WipCap;            // floor(max / 3)"],["add","DrawTick(rect, wip, Tokens.Attention);"]]},
+        {role:"tool",t:"09:06",verb:"Run",target:"dotnet build",status:"ok",out:"Build succeeded.\n  0 Warning(s)\n  0 Error(s)"},
+      ]},
+    warsaw: { name:"warsaw-v2", branch:"fix/res-u4-teardown", bcls:"dirty", hue:"--id-3", group:"ongoing",
+      st:"⏸ waiting · needs input", stcls:"waiting", exc:"waiting", ago:"12m", pr:"#42", unread:true, away:true,
+      note:"Verify the leak-on-wait-timeout path, then approve the release.",
+      catchup:["25 tests passed (cargo, res U4)","PR #42 opened (feat → main)","agent now waiting on a confirm"],
+      msgs:[
+        {role:"you",t:"08:51",body:"Fix the release-on-teardown crash — drain the GPU before dropping the device."},
+        {role:"agent",t:"08:52",
+          think:"The AV fires inside D3D12Core.dll on device drop — a frame is still in flight. Forcing release races the GPU; draining first and leaking on timeout is the safe pair.",
+          body:`<p>Reproduced the access violation — it fires inside <code>D3D12Core.dll</code> when the device is dropped with a frame still in flight. Here's what's going on and how I'll fix it.</p>
+<h4>Root cause</h4>
+<p>On teardown we call <code>device.release()</code> immediately, but the GPU hasn't finished the last submitted frame. Releasing the device out from under it is the race that AVs.</p>
+<h4>Fix</h4>
+<ol>
+<li><strong>Drain</strong> any in-flight frames before touching the device.</li>
+<li><strong>Wait</strong> for the GPU to go idle, bounded by <code>TEARDOWN_TIMEOUT</code>.</li>
+<li>On timeout, <strong>leak</strong> the device via <code>mem::forget</code> rather than risk the crash.</li>
+</ol>
+<pre><code>fn shutdown(&mut self) {
+    self.drain_frames();
+    if !self.wait_idle(TEARDOWN_TIMEOUT) {
+        mem::forget(self.device);  <span class="cm">// safe: process is exiting</span>
+    }
+}</code></pre>
+<blockquote>Trade-off: a timeout leaks the device's memory until the process exits — acceptable on shutdown, and strictly safer than the access violation.</blockquote>
+<p>Editing <code>engine/src/teardown.rs</code> now.</p>`},
+        {role:"tool",t:"09:03",verb:"Edit",target:"engine/src/teardown.rs",status:"ok",
+          diff:[["ctx","fn shutdown(&mut self) {"],["del","    self.device.release();"],["add","    self.drain_frames();                 // wait out in-flight GPU work"],["add","    if !self.wait_idle(TEARDOWN_TIMEOUT) {"],["add","        mem::forget(self.device);        // leak on timeout — never AV"],["add","    }"],["ctx","}"]]},
+        {role:"tool",t:"09:14",verb:"Run",target:"cargo test -p engine",status:"ok",out:"running 25 tests …\ntest result: ok. 25 passed; 0 failed; 0 ignored"},
+        {role:"agent",t:"09:15",body:"Tests are green and PR #42 is up. One call before I mark it done:",
+          waiting:true, ask:{q:"On wait-timeout, should the engine release the device or leak it?",
+            opts:[["Leak","safe — holds the device's memory until process exit"],["Release","reclaims memory now, but risks the D3D12 access violation"]]}},
+      ]},
+    kyoto:  { name:"kyoto", branch:"feat/webview2-pane", bcls:"clean", hue:"--id-2", group:"ongoing",
+      st:"codex · running tests", stcls:"busy", ago:"5m",
+      note:"Confirm the per-user UDF path resolves before merging.",
+      working:{verb:"Run", target:"cargo test -p surface"},
+      msgs:[
+        {role:"you",t:"09:08",body:"Make the WebView2 UDF explicit under %LOCALAPPDATA% so it's writable unpackaged."},
+        {role:"agent",t:"09:09",body:"Setting an explicit UserDataFolder via CreateWithOptionsAsync, then running the surface tests."},
+        {role:"tool",t:"09:10",verb:"Edit",target:"app/Panes/WebView2Pane.cs",status:"ok",
+          diff:[["add","opts.UserDataFolder = Path.Combine(localAppData, \"Optimus\", \"WebView2\");"]]},
+        {role:"tool",t:"09:11",verb:"Run",target:"cargo test -p surface",status:"run",out:"running 12 tests …"},
+      ]},
+    lagos:  { name:"lagos", branch:"chore/ipc-harden", bcls:"dirty", hue:"--id-0", group:"ongoing",
+      st:"✕ error · build failed", stcls:"error", exc:"error", ago:"8m", unread:true,
+      note:"Build failed on a nullable-ref warning at the parse boundary — needs a decision.",
+      msgs:[
+        {role:"you",t:"08:58",body:"Harden the CommandRouter parse boundary against null args."},
+        {role:"agent",t:"08:59",body:"Adding guard clauses, treating warnings as errors per the 0-warning gate."},
+        {role:"tool",t:"08:59",verb:"Edit",target:"app/Ipc/CommandRouter.cs",status:"ok",
+          diff:[["del","var name = msg.Args[0];"],["add","var name = msg.Args?[0];"]]},
+        {role:"tool",t:"09:00",verb:"Run",target:"dotnet build",status:"fail",out:"error CS8602: Dereference of a possibly null reference.\nBuild FAILED.  1 Error(s)"},
+        {role:"agent",t:"09:00",body:"The 0-warning gate is now failing on that nullable deref:",
+          waiting:true, ask:{q:"Suppress at the boundary, or thread an explicit null-check up the call chain?",
+            opts:[["Thread up","correct, but touches 3 call sites"],["Suppress","one line, local — but hides a real nullability signal"]]}},
+      ]},
+    oslo:   { name:"oslo", branch:"feat/notif-digest", bcls:"clean", hue:"--id-5", group:"ongoing",
+      st:"done · awaiting review", stcls:"done", ago:"22m", pr:"#44",
+      note:"Ready for your review — nothing pending on the agent side.",
+      msgs:[
+        {role:"you",t:"08:30",body:"Build the two-lane breakpoint digest."},
+        {role:"tool",t:"08:46",verb:"Edit",target:"app/Chrome/DigestView.cs",status:"ok",
+          diff:[["add","var lane = ev.IsBlocking ? Lane.Immediate : Lane.Pooled;"]]},
+        {role:"agent",t:"08:47",body:"Done. The immediate lane carries blocked/error/destructive events; the pooled lane flushes at your next breakpoint. PR #44 is up for review — nothing pending on my side."},
+      ]},
+    berlin: { name:"berlin", branch:"feat/capacity-model", bcls:"merged", hue:"--id-6", group:"done",
+      state:"parked", st:"#38 merged", stcls:"done", ago:"1h", pr:"#38", parked:true, note:"Merged. Holds a live slot until engine dehydration ships.",
+      msgs:[{role:"agent",t:"yest",body:"CapacityModel merged in #38. Session parked — still holding its slot (dehydration deferred)."}]},
+    cairo:  { name:"cairo", branch:"fix/fontdb-default", bcls:"merged", hue:"--id-2", group:"done",
+      state:"parked", st:"#31 merged", stcls:"done", ago:"3h", pr:"#31", parked:true, note:"Merged. Holds a live slot until engine dehydration ships.",
+      msgs:[{role:"agent",t:"2d",body:"Pinned the monospace family chain; merged in #31. Parked."}]},
+  };
+  const GROUPS = [
+    ["done","Done","merged",["berlin","cairo"]],
+    ["review","In review","PR open",["warsaw","oslo"]],
+    ["progress","In progress","live + queued",["tokyo","kyoto","lagos","vienna","lima"]],
+  ];
+  const DIGEST = {
+    immediate:[["lagos","build failed","--pr-closed"],["warsaw-v2","waiting on input","--attention"]],
+    pooled:[["kyoto","tests passed","--git-branch"],["tokyo","PR #44 opened","--pr-open"],["oslo","done, awaiting review","--text-muted"]],
+  };
+
+  // ----- per-session GitHub / PR state (right pane) -----
+  // changes: [dir, filename, additions, deletions] · run lines tagged err/ok inline.
+  const GH = {
+    vienna:{ state:"unspawned" },
+    lima:  { state:"unspawned" },
+    tokyo: { state:"none",
+      changes:[["app/Chrome/","CapacityIndicatorView.cs",3,1]],
+      checks:[["dotnet build","ok"]],
+      run:[["$ dotnet build",""],["Build succeeded.","ok"],["  0 Warning(s)   0 Error(s)",""]] },
+    kyoto: { state:"checks",
+      changes:[["app/Panes/","WebView2Pane.cs",6,0]],
+      checks:[["surface tests","run"]],
+      run:[["$ cargo test -p surface",""],["   Running 12 tests …",""]] },
+    lagos: { state:"failing",
+      changes:[["app/Ipc/","CommandRouter.cs",1,1]],
+      checks:[["dotnet build","fail"]],
+      run:[["$ dotnet build",""],["error CS8602: Dereference of a","err"],["  possibly null reference.","err"],["Build FAILED.   1 Error(s)","err"]] },
+    warsaw:{ pr:"#42", state:"ready",
+      changes:[["engine/src/","teardown.rs",5,1],["engine/src/","lib.rs",2,0],["engine/tests/","teardown_av.rs",18,0],["","CHANGELOG.md",3,0]],
+      checks:[["cargo build","ok"],["cargo test · 25","ok"],["clippy","ok"]],
+      run:[["$ cargo test -p engine",""],["    Finished test target(s)",""],["     Running 25 tests",""],["test result: ok. 25 passed; 0 failed","ok"],["✓ 0 conflicts with main","ok"]] },
+    oslo:  { pr:"#44", state:"conflict",
+      changes:[["app/Chrome/","DigestView.cs",49,5],["app/Chrome/","DigestView.xaml",12,0],["app/Models/","NotificationLane.cs",20,0]],
+      conflicts:["app/Chrome/DigestView.cs"],
+      checks:[["build","ok"],["tests","ok"]],
+      run:[["$ git merge origin/main",""],["Auto-merging app/Chrome/DigestView.cs",""],["CONFLICT (content): in DigestView.cs","err"],["Automatic merge failed; resolve","err"],["  and commit to continue.","err"]] },
+    berlin:{ pr:"#38", state:"merged",
+      changes:[["app/Models/","CapacityModel.cs",120,0],["app/Chrome/","CapacityIndicatorView.cs",34,2]],
+      checks:[["build","ok"],["tests","ok"]],
+      run:[["✓ Squash-merged into main","ok"],["  e0cd1e9 · 2026-06-16",""]] },
+    cairo: { pr:"#31", state:"merged",
+      changes:[["engine/src/text/","fontdb.rs",8,3]],
+      checks:[["build","ok"]],
+      run:[["✓ Squash-merged into main","ok"],["  d30009a · 2026-06-14",""]] },
+  };
+  const GHSTATE = {
+    ready:    ["Ready to merge","ready"],
+    conflict: ["Merge conflicts","conflict"],
+    failing:  ["Checks failing","conflict"],
+    checks:   ["Checks running","checks"],
+    none:     ["No PR yet","none"],
+    merged:   ["Merged","merged"],
+    unspawned:["Not spawned","none"],
+  };
+
+  let current = "warsaw";
+
+  // ----- render left list -----
+  const badgeFor = { warsaw:"1", };
+  function renderList() {
+    const s = document.getElementById("scroll"); s.innerHTML = "";
+    GROUPS.forEach(([gid,gname,gnote,ids])=>{
+      const g = document.createElement("div"); g.className = "grp "+gid;
+      g.innerHTML = `<span class="chev">▾</span><span class="gn">${gname}</span><span class="gc">${ids.length} · ${gnote}</span>`;
+      s.appendChild(g);
+      ids.forEach(id=>{
+        const d = SESS[id]; const r = document.createElement("div");
+        r.className = "row" + (id===current?" selected":"") + (d.exc?(" exc "+d.exc):"") + (d.parked?" parked":"");
+        r.onclick = ()=>select(id);
+        const badge = id==="warsaw" ? `<span class="cap-badge" style="left:-9px;top:8px">1</span>` : "";
+        const pr = d.pr ? `<span class="pr ${d.bcls==="merged"?"merged":"open"}">${d.pr}${d.bcls==="merged"?" merged":""}</span>` : "";
+        const stchip = d.stcls ? `<span class="st ${d.stcls}">${d.st}</span>` : `<span class="st">${d.st}</span>`;
+        const meta2 = d.spawned===false ? `<span class="meta">not spawned</span>` : "";
+        r.innerHTML = `${badge}<span class="spine" style="background:${H(d.hue)}"></span>
+          <div><div class="l1"><span class="branch ${d.bcls}">${d.branch}</span></div>
+          <div class="l2"><span class="meta">${d.name}</span>${stchip}${pr}${meta2}</div></div>
+          <div style="display:flex;align-items:center;gap:6px">${d.unread?'<span class="unread"></span>':''}<span class="ago">${d.ago}</span></div>`;
+        s.appendChild(r);
+      });
+    });
+  }
+
+  // ----- render center chat -----
+  function select(id){
+    current = id; renderList();
+    const d = SESS[id];
+    document.getElementById("ch-sp").style.background = H(d.hue);
+    document.getElementById("ch-nm").textContent = d.name;
+    document.getElementById("ch-br").textContent = d.branch;
+    const st = document.getElementById("ch-st"); st.className = "st "+(d.stcls||""); st.textContent = d.st;
+    document.getElementById("ch-ago").textContent = d.ago==="—"?"":("· "+d.ago);
+    document.getElementById("composer-input").placeholder = "Reply to "+d.name+"…";
+    const tm = document.getElementById("threadmax"); tm.innerHTML = "";
+
+    if (d.spawned===false){
+      tm.innerHTML = `<div class="notspawned"><div><div class="big">${d.name} · ${d.branch}</div>
+        <div style="font-family:var(--mono);font-size:var(--fs-meta)">Planned — no terminal spawned yet, so it holds no safe-zone slot.</div>
+        <div class="start">▶ Start session (claims 1 slot)</div></div></div>`;
+      document.getElementById("insp").innerHTML = inspHTML(d, id);
+      return;
+    }
+    if (d.away && d.catchup){
+      const c = document.createElement("div"); c.className="catchup";
+      c.innerHTML = `<span class="cap-badge" style="left:-9px;top:-9px">2</span>
+        <div class="ct">since you were away · ${d.ago}<span class="x" onclick="this.closest('.catchup').remove()">✕ dismiss</span></div>
+        <ul>${d.catchup.map(x=>`<li><span style="color:var(--attention)">›</span><b>${x}</b></li>`).join("")}</ul>`;
+      tm.appendChild(c);
+    }
+    d.msgs.forEach(m=>{
+      if (m.role==="tool"){ tm.appendChild(opEl(m)); return; }
+      const el = document.createElement("div"); el.className = "turn "+m.role;
+      if (m.role==="you"){
+        el.innerHTML = `<div class="role"><span class="av">U</span><span class="nm">you</span><span class="t">${m.t}</span></div>
+          <div class="bubble">${m.body}</div>`;
+      } else {
+        let h = `<div class="role"><span class="av" style="background:${H(d.hue)}">◆</span><span class="nm">${d.name}</span><span class="t">${m.t}</span></div>`;
+        if (m.think) h += `<details class="think"><summary>thought for a moment</summary><div class="tk">${m.think}</div></details>`;
+        h += `<div class="prose">${m.body}</div>`;
+        if (m.waiting && m.ask){
+          h += `<div class="ask"><div class="at">⏸ waiting · needs your input</div>
+            <div class="aq">${m.ask.q}</div>
+            <div class="opts">${m.ask.opts.map(([k,v])=>`<div class="opt"><b>${k}</b>${v}</div>`).join("")}</div>
+            <div class="decide"><button class="approve">✓ ${m.ask.opts[0][0]}</button><button class="reject">${m.ask.opts[1][0]}</button><button>Reply…</button></div></div>`;
+        }
+        el.innerHTML = h;
+      }
+      tm.appendChild(el);
+    });
+    if (d.working){
+      const lv = document.createElement("div"); lv.className="live";
+      lv.innerHTML = `<span class="pulse"></span>${d.name} is working — <b>${d.working.verb} ${d.working.target}</b><span class="car"></span>`;
+      tm.appendChild(lv);
+    }
+    document.getElementById("insp").innerHTML = inspHTML(d, id);
+    const tb = document.querySelector("#insp .term-body"); if (tb) tb.scrollTop = tb.scrollHeight;
+  }
+
+  function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  const STAT = { ok:"✓ done", run:"running…", fail:"✕ failed" };
+  function opEl(m){
+    const el = document.createElement("div"); el.className="op";
+    let h = `<div class="op-h"><span class="verb">${m.verb}</span><span class="tgt">${esc(m.target)}</span><span class="stat ${m.status}">${STAT[m.status]}</span></div>`;
+    if (m.diff) h += `<div class="diff">${m.diff.map(([k,l])=>{
+      const cls = k==="add"?"add":k==="del"?"del":"ctx"; const g = k==="add"?"+":k==="del"?"−":"";
+      return `<div class="dl ${cls}"><span class="gut">${g}</span>${esc(l)}</div>`; }).join("")}</div>`;
+    if (m.out){ const cls = m.status==="fail"?"fail":m.status==="ok"?"ok":""; h += `<div class="op-out"><span class="${cls}">${esc(m.out)}</span></div>`; }
+    el.innerHTML = h; return el;
+  }
+
+  // ----- terminal: type into the selected session's PTY (mock) -----
+  function termRender(body, run){
+    body.innerHTML = run.map(([l,cls])=>`<div class="rl ${cls||""}">${esc(l)}</div>`).join("");
+    body.scrollTop = body.scrollHeight;
+  }
+  function termKey(e, id){
+    if (e.key !== "Enter") return;
+    const inp = e.target, cmd = inp.value.trim();
+    const body = inp.closest(".term-pane").querySelector(".term-body");
+    const g = GH[id]; g.run = g.run || [];
+    if (!cmd) return;
+    inp.value = "";
+    if (cmd === "clear"){ g.run = []; body.innerHTML = ""; return; }
+    g.run.push(["❯ "+cmd, "cmd"]);
+    const lc = cmd.toLowerCase();
+    let out;
+    if (lc === "git status") out = [["On branch "+SESS[id].branch, ""],["nothing to commit, working tree clean", "ok"]];
+    else if (lc === "ls")     out = (g.changes||[]).map(c => [c[0]+c[1], ""]);
+    else if (lc.startsWith("cargo") || lc.startsWith("dotnet")) out = [["   running … (mock)", ""]];
+    else if (lc === "help")   out = [["mock terminal — wired to the session's PTY in the app.", ""],["try: git status · ls · clear", ""]];
+    else out = [[cmd.split(" ")[0] + ": command not found", "err"]];
+    out.forEach(o => g.run.push(o));
+    termRender(body, g.run);
+  }
+
+  // ----- render right pane: two panels (PR/changes + terminal) filling the pane -----
+  function inspHTML(d, id){
+    const g = GH[id] || { state:"none" };
+    const idrow = `<div class="gh-id"><span class="sp" style="background:${H(d.hue)}"></span>
+      <span class="nm">${d.name}</span><span class="gh-branch ${d.bcls}">${d.branch}</span></div>`;
+
+    if (g.state==="unspawned"){
+      return `<div class="gh-pane">${idrow}
+        <div class="gh-empty">Not spawned — no working tree yet.<br>Spawning claims one safe-zone slot.</div></div>`;
+    }
+
+    const [label, scls] = GHSTATE[g.state] || GHSTATE.none;
+    const prtxt = g.pr ? `<span class="gh-pr">⑂ ${g.pr} ↗</span>` : `<span class="gh-pr none">local · no PR</span>`;
+    let mergeBtn = "";
+    if (g.state==="ready")        mergeBtn = `<button class="gh-merge">⑂ Merge</button>`;
+    else if (g.state==="conflict")mergeBtn = `<button class="gh-merge dis" disabled>⑂ Resolve first</button>`;
+    else if (g.state==="merged")  mergeBtn = `<span class="gh-merged">✓ merged</span>`;
+    else if (g.state==="none")    mergeBtn = `<button class="gh-merge open">＋ Open PR</button>`;
+    else                          mergeBtn = `<button class="gh-merge dis" disabled>⑂ Merge</button>`;
+
+    const nCh = (g.changes||[]).length, nCk = (g.checks||[]).length;
+    const conflictBanner = g.state==="conflict"
+      ? `<div class="gh-conflict">⚠ This branch has conflicts with <b>main</b> that must be resolved before merging.</div>` : "";
+    const inConflict = f => (g.conflicts||[]).includes(f);
+    const files = `<div class="gh-files">${(g.changes||[]).map(([dir,name,a,del])=>{
+      const conf = inConflict(dir+name);
+      return `<div class="gh-file${conf?" conf":""}">
+        <span class="gh-path"><span class="gh-dir">${esc(dir)}</span>${esc(name)}</span>
+        <span class="gh-cnt">${conf?`<span class="cf">⚠</span>`:""}<span class="add">+${a}</span>${del?`<span class="del">−${del}</span>`:""}</span>
+      </div>`; }).join("")}</div>`;
+
+    const ghPane = `<div class="gh-pane">
+      ${idrow}
+      <div class="gh-head"><span class="cap-badge inl">4</span>
+        ${prtxt}<span class="gh-state ${scls}">${label}</span>${mergeBtn}</div>
+      <div class="gh-scroll">
+        <div class="gh-tabs">
+          <button class="gh-tab">All files</button>
+          <button class="gh-tab sel">Changes ${nCh}</button>
+          <button class="gh-tab">Checks ${nCk}</button>
+          <button class="gh-tab">Review</button></div>
+        ${conflictBanner}${files}
+      </div></div>`;
+
+    const lines = (g.run||[]).map(([l,cls])=>`<div class="rl ${cls||""}">${esc(l)}</div>`).join("");
+    const termPane = `<div class="term-pane">
+      <div class="term-head"><span class="cap-badge inl">5</span><span class="rh">▷ Run</span>
+        <button class="run-tab sp1">Run</button><button>Open</button><button>Stop</button></div>
+      <div class="term-body" onclick="this.parentNode.querySelector('.term-prompt input').focus()">${lines}</div>
+      <div class="term-prompt"><span class="ps">${d.name} ❯</span>
+        <input spellcheck="false" autocomplete="off" placeholder="type a command — try: git status · ls · clear" onkeydown="termKey(event,'${id}')"></div>
+    </div>`;
+
+    return ghPane + termPane;
+  }
+
+  // ----- toggles -----
+  const body = document.body;
+  function setPressed(id,on){ document.getElementById(id).setAttribute("aria-pressed", on); }
+  function toggleLeft(){ const on = body.classList.toggle("left-collapsed"); setPressed("t-left", !on); }
+  function toggleRight(){ const on = body.classList.toggle("right-collapsed"); setPressed("t-right", !on); }
+  document.getElementById("t-left").onclick = toggleLeft;
+  document.getElementById("c-left").onclick = toggleLeft;
+  document.getElementById("h-left").onclick = toggleLeft;
+  document.getElementById("t-right").onclick = toggleRight;
+  document.getElementById("c-right").onclick = toggleRight;
+  document.getElementById("h-right").onclick = toggleRight;
+  document.getElementById("t-annot").onclick = e => { const on = body.classList.toggle("annot"); setPressed("t-annot", on); };
+  document.getElementById("altitude").onclick = e => {
+    const b = e.target.closest("button"); if(!b) return;
+    document.querySelectorAll("#altitude button").forEach(x=>x.setAttribute("aria-pressed", x===b));
+    const task = b.dataset.alt==="task";
+    document.getElementById("crumb").innerHTML = task ? '<b>PHASE</b> › <b>'+SESS[current].name+'</b>' : '<b>PHASE</b> · all sessions';
+    // Task altitude: collapse list to the current session's surfaces is illustrated via the crumb + a hint.
+    document.getElementById("scroll").style.opacity = task ? ".45" : "1";
+  };
+
+  renderList(); select("warsaw");
+</script>
+</body>
+</html>

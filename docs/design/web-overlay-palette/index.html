@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Optimus command-palette tournament — 6 variants</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  html, body { overflow: auto; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: var(--xl); }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: var(--xs); }
+  .lede { color: var(--text-muted); font-size: var(--fs-title); margin-bottom: var(--xl); max-width: 70ch; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--xl); }
+  .card { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 4px; overflow: hidden; }
+  .card h2 { font-size: var(--fs-title); padding: var(--md) var(--lg); display: flex; justify-content: space-between; align-items: baseline; }
+  .card h2 .bet { font-family: var(--mono); font-size: var(--fs-caption); color: var(--text-muted); font-weight: 400; }
+  .card iframe { width: 100%; height: 560px; border: 0; border-top: 1px solid var(--hairline); background: var(--surface-0); display: block; }
+  .card a { color: var(--attention); text-decoration: none; font-size: var(--fs-meta); padding: var(--sm) var(--lg); display: inline-block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Optimus · command-palette tournament</h1>
+  <p class="lede">Six structurally distinct designs for the web-overlay command palette (Option 1 hybrid: a WebView2 layer over the native WinUI shell). All share one mock dataset and the Graphite token set. Judged on: find-fast · capacity-always-visible · looks-like-Optimus · keyboard-complete · realistic-to-build.</p>
+  <div class="grid" id="grid"></div>
+</div>
+<script>
+  const V = [
+    ["01-spotlight.html","V1 · Spotlight","single centered list — pure speed"],
+    ["02-two-pane.html","V2 · Two-pane preview","results + live workspace detail"],
+    ["03-launcher-grid.html","V3 · Launcher grid","spatial tile memory"],
+    ["04-capacity-first.html","V4 · Capacity-first","safe-zone meter is the frame"],
+    ["05-drilldown.html","V5 · Drill-down stack","explicit mode, breadcrumb"],
+    ["06-terminal-line.html","V6 · Terminal-line","shell prompt + status line"],
+  ];
+  document.getElementById("grid").innerHTML = V.map(([f,t,b])=>`
+    <div class="card">
+      <h2>${t}<span class="bet">${b}</span></h2>
+      <a href="${f}" target="_blank">open full ↗</a>
+      <iframe src="${f}" title="${t}"></iframe>
+    </div>`).join("");
+</script>
+</body>
+</html>
