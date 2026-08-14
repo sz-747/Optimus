@@ -6,13 +6,23 @@ mod panic_log;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use optimus_engine::{Engine, EngineEvent, EngineOptions};
+use serde_json::{json, Value};
 use tauri::ipc::Channel;
 use tauri::Manager;
 use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
 use optimus_shell::child_environment;
+use optimus_shell::control_plane::correlation::CorrelationWorker;
+use optimus_shell::control_plane::memory::{
+    AgentIdentityResolver, AgentRecord, AgentRecordKind, AppendOutcome, MemoryError, MemoryStore,
+    RecordKind, RecordSymbol, SymbolRole, TrustedRecord,
+};
+use optimus_shell::control_plane::read_model::{
+    ControlPlaneService, ControlPlaneSnapshot, ControlPlaneUpdate,
+};
 use optimus_shell::domain::capacity::{CapacityModel, CapacityProvider};
 use optimus_shell::domain::ids::{BranchId, PaneId, SurfaceId};
 use optimus_shell::domain::notifications::{NotificationId, TerminalNotification};
@@ -25,8 +35,25 @@ use optimus_shell::ipc::dpapi::Win32SecretProtector;
 use optimus_shell::ipc::naming;
 use optimus_shell::ipc::password::PasswordStore;
 use optimus_shell::ipc::pipe_server::{DispatchFn, PipeServer, PipeServerConfig};
-use optimus_shell::ipc::router::{self, SocketEffects};
+use optimus_shell::ipc::router::{
+    self, MemoryDumpCommand, MemoryRecordCommand, SocketEffectError, SocketEffects,
+};
+use optimus_shell::orchestration::capture::{CompletionCapture, GitCompletionCapture};
+use optimus_shell::orchestration::git::SystemGit;
+use optimus_shell::orchestration::model::{
+    Agent, AgentId, AgentKind, FileScope, Session, SessionId,
+};
+use optimus_shell::orchestration::runtime::{EngineRuntime, RuntimeSupervisor};
+use optimus_shell::orchestration::store::OrchestrationStore;
+use optimus_shell::orchestration::{PrepareAgent, SessionOrchestrator};
+use optimus_shell::relay::{
+    configure_registry, load_relay_config, DesktopRelayExecutor, HttpRelayClient, RelayBridge,
+    RelayCommandExecutor, RelayError, RelayTransport, SnapshotSource,
+};
 use optimus_shell::view::{CapacityView, SidebarRowView, ToastView, TreeView};
+
+type ProductionOrchestrator = SessionOrchestrator<SystemGit>;
+type ProductionRuntime = RuntimeSupervisor<EngineRuntime>;
 
 /// The live engine-backed [`Surface`]: owns one [`Engine`] behind a `Mutex<Option<_>>`. The
 /// `Option` lets [`shutdown`](Surface::shutdown) drop the engine exactly once (idempotent — R2);
@@ -622,6 +649,178 @@ fn equalize(host: tauri::State<'_, DomainHost>) -> TreeView {
 /// notification model — the port of C# `PipeServerEffects` routing to `WorkspaceHost`.
 struct PipeEffects {
     host: DomainHost,
+    capture: Option<ControlCapture>,
+}
+
+#[derive(Clone)]
+struct ControlCapture {
+    memory: Arc<MemoryStore>,
+    sessions: Arc<OrchestrationStore>,
+}
+
+impl ControlCapture {
+    fn authenticated_agent(
+        &self,
+        surface: SurfaceId,
+        caller_capability: Option<&str>,
+    ) -> Result<Option<Agent>, SocketEffectError> {
+        let agent = self
+            .sessions
+            .agent_by_surface(surface)
+            .map_err(|_| SocketEffectError::Internal)?;
+        let Some(agent) = agent else {
+            return Ok(None);
+        };
+        let authorized = caller_capability.is_some_and(|capability| {
+            self.sessions
+                .verify_agent_capability(surface, capability)
+                .unwrap_or(false)
+        });
+        if !authorized {
+            return Err(SocketEffectError::Unauthorized);
+        }
+        Ok(Some(agent))
+    }
+
+    fn record_status(
+        &self,
+        surface: SurfaceId,
+        status: &str,
+        caller_capability: Option<&str>,
+    ) -> Result<bool, SocketEffectError> {
+        let Some(agent) = self.authenticated_agent(surface, caller_capability)? else {
+            return Ok(false);
+        };
+        let timestamp = unix_ms();
+        self.memory
+            .append_trusted(TrustedRecord {
+                fact: status.to_string(),
+                why: None,
+                agent_id: agent.agent_key,
+                kind: RecordKind::Status,
+                file_key: None,
+                branch: Some(agent.branch),
+                workspace_id: agent.workspace_id.0,
+                reverses: None,
+                parent_record: None,
+                symbols: Vec::new(),
+                ts: Some(timestamp),
+            })
+            .map_err(|_| SocketEffectError::Internal)?;
+        let _ = self.sessions.touch_record(agent.id, timestamp);
+        Ok(true)
+    }
+
+    fn memory_record(&self, command: MemoryRecordCommand) -> Result<Value, SocketEffectError> {
+        let Some(agent) =
+            self.authenticated_agent(command.surface, Some(&command.caller_capability))?
+        else {
+            return Err(SocketEffectError::Unauthorized);
+        };
+        let kind = match command.kind.as_str() {
+            "decision" => AgentRecordKind::Decision,
+            "change" => AgentRecordKind::Change,
+            "status" => AgentRecordKind::Status,
+            "error" => AgentRecordKind::Error,
+            _ => {
+                return Err(SocketEffectError::InvalidInput(
+                    "kind must be decision, change, status, or error".to_string(),
+                ))
+            }
+        };
+        let mut symbols = command
+            .defines
+            .into_iter()
+            .map(|value| RecordSymbol {
+                value,
+                role: SymbolRole::Defines,
+            })
+            .collect::<Vec<_>>();
+        symbols.extend(command.references.into_iter().map(|value| RecordSymbol {
+            value,
+            role: SymbolRole::References,
+        }));
+        let outcome = self
+            .memory
+            .append_agent(
+                command.surface,
+                AgentRecord {
+                    fact: command.fact,
+                    why: command.why,
+                    kind,
+                    file_key: command.file_key,
+                    reverses: command.reverses,
+                    symbols,
+                },
+            )
+            .map_err(memory_effect_error)?;
+        let timestamp = unix_ms();
+        let _ = self.sessions.touch_record(agent.id, timestamp);
+        Ok(match outcome {
+            AppendOutcome::Stored { record_id } => {
+                json!({ "recordId": record_id, "coalesced": false })
+            }
+            AppendOutcome::Coalesced { record_id, dropped } => {
+                json!({ "recordId": record_id, "coalesced": true, "dropped": dropped })
+            }
+        })
+    }
+
+    fn memory_dump(&self, command: MemoryDumpCommand) -> Result<Value, SocketEffectError> {
+        let Some(agent) =
+            self.authenticated_agent(command.surface, Some(&command.caller_capability))?
+        else {
+            return Err(SocketEffectError::Unauthorized);
+        };
+        let records = self
+            .memory
+            .records_before(agent.workspace_id.0, command.limit, command.before_id)
+            .map_err(memory_effect_error)?;
+        let mut values = Vec::with_capacity(records.len());
+        for record in &records {
+            let symbols = self
+                .memory
+                .symbols(record.id)
+                .map_err(memory_effect_error)?
+                .into_iter()
+                .map(|symbol| {
+                    json!({
+                        "value": symbol.value,
+                        "role": match symbol.role {
+                            SymbolRole::Defines => "defines",
+                            SymbolRole::References => "references",
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            values.push(json!({
+                "id": record.id,
+                "fact": record.fact,
+                "why": record.why,
+                "agentId": record.agent_id,
+                "kind": record.kind.as_str(),
+                "trust": record.trust.as_str(),
+                "fileKey": record.file_key,
+                "branch": record.branch,
+                "reverses": record.reverses,
+                "parentRecord": record.parent_record,
+                "timestamp": record.ts,
+                "symbols": symbols,
+            }));
+        }
+        let next_before_id = records.last().map(|record| record.id);
+        Ok(json!({ "records": values, "nextBeforeId": next_before_id }))
+    }
+}
+
+fn memory_effect_error(error: MemoryError) -> SocketEffectError {
+    match error {
+        MemoryError::UnknownSurface(_) => SocketEffectError::Unauthorized,
+        MemoryError::InvalidReference(_)
+        | MemoryError::InvalidSourceKey
+        | MemoryError::InvalidInput(_) => SocketEffectError::InvalidInput(error.to_string()),
+        MemoryError::Sqlite(_) | MemoryError::Io(_) => SocketEffectError::Internal,
+    }
 }
 
 impl SocketEffects for PipeEffects {
@@ -719,13 +918,57 @@ impl SocketEffects for PipeEffects {
         self.host.query(|d| d.jump_to_unread())
     }
 
-    fn set_status(&self, status: &str) {
+    fn set_status(&self, _surface: Option<SurfaceId>, status: &str) {
         let status = status.to_string();
         self.host.run(move |d| d.set_status(&status));
     }
-    fn set_progress(&self, progress: &str) {
+    fn set_progress(&self, _surface: Option<SurfaceId>, progress: &str) {
         let progress = progress.to_string();
         self.host.run(move |d| d.set_progress(&progress));
+    }
+    fn set_status_authenticated(
+        &self,
+        surface: Option<SurfaceId>,
+        status: &str,
+        caller_capability: Option<&str>,
+    ) -> Result<(), SocketEffectError> {
+        if let (Some(surface), Some(capture)) = (surface, &self.capture) {
+            if capture.record_status(surface, status, caller_capability)? {
+                return Ok(());
+            }
+        }
+        self.set_status(surface, status);
+        Ok(())
+    }
+    fn set_progress_authenticated(
+        &self,
+        surface: Option<SurfaceId>,
+        progress: &str,
+        caller_capability: Option<&str>,
+    ) -> Result<(), SocketEffectError> {
+        if let (Some(surface), Some(capture)) = (surface, &self.capture) {
+            if capture.record_status(
+                surface,
+                &format!("Progress: {progress}"),
+                caller_capability,
+            )? {
+                return Ok(());
+            }
+        }
+        self.set_progress(surface, progress);
+        Ok(())
+    }
+    fn memory_record(&self, command: MemoryRecordCommand) -> Result<Value, SocketEffectError> {
+        self.capture
+            .as_ref()
+            .ok_or(SocketEffectError::Internal)?
+            .memory_record(command)
+    }
+    fn memory_dump(&self, command: MemoryDumpCommand) -> Result<Value, SocketEffectError> {
+        self.capture
+            .as_ref()
+            .ok_or(SocketEffectError::Internal)?
+            .memory_dump(command)
     }
     // C# `PipeServerEffects.LogLine` / `SidebarState` are deliberate no-ops.
     fn log_line(&self, _line: &str) {}
@@ -792,7 +1035,7 @@ fn resolved_pipe_name() -> String {
     }
 }
 
-fn start_pipe_server(host: DomainHost, pipe_name: String) -> PipeServer {
+fn start_pipe_server(host: DomainHost, pipe_name: String, capture: ControlCapture) -> PipeServer {
     let mode = access::parse_mode(std::env::var(access::CONTROL_MODE_ENV).ok().as_deref());
     PipeServer::start(
         PipeServerConfig {
@@ -800,14 +1043,23 @@ fn start_pipe_server(host: DomainHost, pipe_name: String) -> PipeServer {
             control_mode: mode,
             max_clients: 16,
         },
-        build_dispatch(mode, host),
+        build_dispatch_with_capture(mode, host, Some(capture)),
     )
 }
 
 /// The router dispatch closure the pipe server hands each request. Shared across client threads
 /// (Send + Sync): it captures a Copy `AuthState` and a `DomainHost` handle, building a fresh
 /// [`PipeEffects`] per request that marshals every verb to the single domain thread.
+#[cfg(test)]
 fn build_dispatch(mode: access::SocketControlMode, host: DomainHost) -> DispatchFn {
+    build_dispatch_with_capture(mode, host, None)
+}
+
+fn build_dispatch_with_capture(
+    mode: access::SocketControlMode,
+    host: DomainHost,
+    capture: Option<ControlCapture>,
+) -> DispatchFn {
     // Fail-closed: Password mode marks commands as needing auth. Full per-connection auth-state
     // threading is deferred (the shared closure holds no per-connection state), so Password mode
     // currently blocks commands rather than tracking a login — secure default.
@@ -820,9 +1072,120 @@ fn build_dispatch(mode: access::SocketControlMode, host: DomainHost) -> Dispatch
         AuthState::UNPROTECTED
     };
     Arc::new(move |line| {
-        let effects = PipeEffects { host: host.clone() };
+        let effects = PipeEffects {
+            host: host.clone(),
+            capture: capture.clone(),
+        };
         router::dispatch(line, &effects, auth)
     })
+}
+
+#[tauri::command]
+fn control_plane_snapshot(
+    service: tauri::State<'_, Arc<ControlPlaneService>>,
+) -> Result<ControlPlaneSnapshot, String> {
+    service.snapshot().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn listen_control_plane(
+    service: tauri::State<'_, Arc<ControlPlaneService>>,
+    on_update: Channel<ControlPlaneUpdate>,
+) -> u64 {
+    let channel = on_update.clone();
+    let revision = service.subscribe(Arc::new(move |revision| {
+        channel.send(ControlPlaneUpdate { revision }).is_ok()
+    }));
+    let _ = on_update.send(ControlPlaneUpdate { revision });
+    revision
+}
+
+#[tauri::command]
+fn control_session_start(
+    orchestrator: tauri::State<'_, Arc<ProductionOrchestrator>>,
+    service: tauri::State<'_, Arc<ControlPlaneService>>,
+    repo_root: String,
+    name: String,
+) -> Result<Session, String> {
+    let session = orchestrator
+        .start_session(std::path::Path::new(&repo_root), &name, unix_ms())
+        .map_err(|error| error.to_string())?;
+    service.invalidate();
+    Ok(session)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn control_agent_prepare(
+    orchestrator: tauri::State<'_, Arc<ProductionOrchestrator>>,
+    service: tauri::State<'_, Arc<ControlPlaneService>>,
+    session_id: i64,
+    parent_id: Option<i64>,
+    name: String,
+    task: String,
+    command: String,
+    branch: String,
+    kind: String,
+    file_scope: Vec<String>,
+) -> Result<Agent, String> {
+    let kind = match kind.as_str() {
+        "writer" => AgentKind::Writer,
+        "recon" => AgentKind::Recon,
+        _ => return Err("kind must be writer or recon".to_string()),
+    };
+    let agent = orchestrator
+        .prepare_agent(
+            SessionId(session_id),
+            PrepareAgent {
+                parent: parent_id.map(AgentId),
+                name,
+                task,
+                command,
+                branch,
+                kind,
+                file_scope: file_scope.into_iter().map(FileScope::new).collect(),
+            },
+            unix_ms(),
+        )
+        .map_err(|error| error.to_string())?;
+    service.invalidate();
+    Ok(agent)
+}
+
+#[tauri::command]
+fn control_agent_start(
+    runtime: tauri::State<'_, Arc<ProductionRuntime>>,
+    service: tauri::State<'_, Arc<ControlPlaneService>>,
+    agent_id: i64,
+) -> Result<Agent, String> {
+    let agent = runtime
+        .start_agent(AgentId(agent_id))
+        .map_err(|error| error.to_string())?;
+    service.invalidate();
+    Ok(agent)
+}
+
+#[tauri::command]
+fn control_agent_stop(
+    runtime: tauri::State<'_, Arc<ProductionRuntime>>,
+    service: tauri::State<'_, Arc<ControlPlaneService>>,
+    agent_id: i64,
+) -> Result<Agent, String> {
+    let agent = runtime
+        .stop_agent(AgentId(agent_id))
+        .map_err(|error| error.to_string())?;
+    service.invalidate();
+    Ok(agent)
+}
+
+fn unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as i64)
+}
+
+fn relay_strict() -> bool {
+    std::env::var("OPTIMUS_RELAY_STRICT").is_ok_and(|value| value == "1")
 }
 
 fn main() {
@@ -838,11 +1201,17 @@ fn main() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 let app = window.app_handle();
+                if let Some(relay) = app.try_state::<RelayBridge>() {
+                    relay.stop();
+                }
                 if let Some(server) = app.try_state::<PipeServer>() {
                     server.stop();
                 }
                 if let Some(host) = app.try_state::<DomainHost>() {
                     host.query(|d| d.dispose_all_surfaces());
+                }
+                if let Some(runtime) = app.try_state::<Arc<ProductionRuntime>>() {
+                    runtime.stop_all();
                 }
             }
         })
@@ -869,11 +1238,86 @@ fn main() {
             let pipe_name = resolved_pipe_name();
             let factory = Arc::new(EngineSurfaceFactory::new(0, pipe_name.clone()));
 
+            let data_root = std::env::var_os("LOCALAPPDATA")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir)
+                .join("optimus");
+            std::fs::create_dir_all(&data_root)?;
+            let database_path = data_root.join("memory.db");
+            let sessions = Arc::new(OrchestrationStore::open(&database_path)?);
+            sessions.recover_interrupted(unix_ms())?;
+            let resolver: Arc<dyn AgentIdentityResolver> = sessions.clone();
+            let memory = Arc::new(MemoryStore::open(&database_path, resolver)?);
+            let correlation = CorrelationWorker::attach(memory.clone());
+            let control_plane =
+                ControlPlaneService::start(sessions.clone(), memory.clone(), capacity.clone());
+            let observer_service = control_plane.clone();
+            let git_capture = Arc::new(GitCompletionCapture::new(
+                sessions.clone(),
+                memory.clone(),
+                SystemGit,
+            ));
+            git_capture.retry_pending()?;
+            let completion_capture: Arc<dyn CompletionCapture> = git_capture;
+            let runtime = Arc::new(
+                RuntimeSupervisor::new(
+                    sessions.clone(),
+                    EngineRuntime::new(0),
+                    pipe_name.clone(),
+                    Some(capacity.clone()),
+                    Arc::new(move |_, _| {
+                        observer_service.invalidate();
+                    }),
+                )
+                .with_completion_capture(completion_capture),
+            );
+            let orchestrator = Arc::new(SessionOrchestrator::new(
+                sessions.clone(),
+                Some(memory.clone()),
+                SystemGit,
+            ));
+            let capture = ControlCapture { memory, sessions };
+
+            let relay_result = (|| -> Result<RelayBridge, RelayError> {
+                let Some(config) = load_relay_config()? else {
+                    return Ok(RelayBridge::disabled());
+                };
+                configure_registry(&config, orchestrator.store(), unix_ms())?;
+                let transport: Arc<dyn RelayTransport> = Arc::new(HttpRelayClient::new(&config)?);
+                let source: Arc<dyn SnapshotSource> = control_plane.clone();
+                let executor: Arc<dyn RelayCommandExecutor> = Arc::new(DesktopRelayExecutor::new(
+                    config.device_id.clone(),
+                    orchestrator.store().clone(),
+                    orchestrator.clone(),
+                    runtime.clone(),
+                ));
+                RelayBridge::start(
+                    config,
+                    transport,
+                    source,
+                    orchestrator.store().clone(),
+                    executor,
+                )
+            })();
+            let relay = match relay_result {
+                Ok(relay) => relay,
+                Err(error) if relay_strict() => return Err(error.into()),
+                Err(error) => {
+                    eprintln!("Optimus relay disabled: {error}");
+                    RelayBridge::disabled()
+                }
+            };
+
             // The domain thread owns the workspace + notification + surface model; the pipe server
             // and the frontend commands both drive it through this one handle.
             let host =
                 DomainHost::spawn_with(factory.clone() as Arc<dyn SurfaceFactory>, Some(capacity));
-            app.manage(start_pipe_server(host.clone(), pipe_name));
+            app.manage(start_pipe_server(host.clone(), pipe_name, capture));
+            app.manage(relay);
+            app.manage(correlation);
+            app.manage(control_plane);
+            app.manage(orchestrator);
+            app.manage(runtime);
             app.manage(host);
             app.manage(factory);
             Ok(())
@@ -901,7 +1345,13 @@ fn main() {
             select_previous_tab,
             toggle_zoom,
             set_divider,
-            equalize
+            equalize,
+            control_plane_snapshot,
+            listen_control_plane,
+            control_session_start,
+            control_agent_prepare,
+            control_agent_start,
+            control_agent_stop
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Optimus shell");
@@ -910,6 +1360,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use optimus_shell::orchestration::model::FileScope;
     use serde_json::Value;
     use std::time::{Duration, Instant};
     use tauri::ipc::InvokeResponseBody;
@@ -925,6 +1376,64 @@ mod tests {
         let root: Value = serde_json::from_str(&response).expect("valid json");
         assert_eq!(root["ok"], true, "server rejected capabilities: {response}");
         assert_eq!(root["result"]["capabilities"], "v1,v2");
+    }
+
+    #[test]
+    fn caller_scoped_status_lands_on_the_orchestrated_agent_not_the_selected_workspace() {
+        let sessions = Arc::new(OrchestrationStore::in_memory().unwrap());
+        let workspace = sessions
+            .get_or_create_workspace("optimus", std::path::Path::new("C:/dev/Optimus"), 1)
+            .unwrap();
+        let session = sessions
+            .create_session(workspace.id, "run", "abc123", 2)
+            .unwrap();
+        let agent = sessions
+            .plan_agent(
+                session.id,
+                None,
+                "writer",
+                "Build the web view",
+                "codex",
+                "feat/web",
+                AgentKind::Writer,
+                &[FileScope::new("ui")],
+                3,
+            )
+            .unwrap();
+        sessions.mark_ready(agent.id, 4).unwrap();
+        let surface = SurfaceId(1_000_001);
+        sessions.mark_running(agent.id, surface, 5).unwrap();
+        sessions
+            .set_agent_capability(agent.id, "test-capability", 6)
+            .unwrap();
+        let resolver: Arc<dyn AgentIdentityResolver> = sessions.clone();
+        let memory = Arc::new(MemoryStore::in_memory(resolver).unwrap());
+        let host = DomainHost::spawn();
+        let dispatch = build_dispatch_with_capture(
+            access::SocketControlMode::OptimusOnly,
+            host.clone(),
+            Some(ControlCapture {
+                memory: memory.clone(),
+                sessions,
+            }),
+        );
+
+        let response = dispatch(
+            r#"{"id":"1","method":"set-status","params":{"status":"testing","surface_id":"S1000001","caller_capability":"test-capability"}}"#,
+        )
+        .expect("status response");
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap()["ok"],
+            true
+        );
+        let records = memory.records(workspace.id.0, 10).unwrap();
+        assert_eq!(1, records.len());
+        assert_eq!(agent.agent_key, records[0].agent_id);
+        assert_eq!("testing", records[0].fact);
+        assert_eq!(RecordKind::Status, records[0].kind);
+        assert!(host.query(|domain| domain.sidebar_view())[0]
+            .status
+            .is_none());
     }
 
     /// End-to-end through the real wiring: a `notification.create_for_caller` frame reaches the

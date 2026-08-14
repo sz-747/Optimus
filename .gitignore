@@ -36,3 +36,9 @@ Thumbs.db
 node_modules
 ui/dist
 target
+/artifacts/playwright/
+.env.local
+.env.*.local
+.vercel/
+
+.vercel

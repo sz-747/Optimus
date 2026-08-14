@@ -6,15 +6,24 @@
   "scripts": {
     "dev": "vite ui",
     "build": "vite build ui",
+    "test:relay": "node --test relay/tests/*.test.mjs",
+    "test:web": "playwright test",
+    "test:web:relay": "npm run build && playwright test --config playwright.relay.config.js",
+    "test:web:live": "playwright test --config playwright.live.config.js",
+    "test:web:headed": "playwright test --headed",
     "tauri": "tauri"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tauri-apps/cli": "^2",
     "vite": "^6"
   },
   "dependencies": {
+    "@upstash/redis": "^1.38.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-webgl": "^0.19.0",
-    "@xterm/xterm": "^6.0.0"
+    "@xterm/xterm": "^6.0.0",
+    "lucide": "^1.24.0",
+    "redis": "^5.12.1"
   }
 }

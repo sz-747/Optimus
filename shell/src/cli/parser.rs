@@ -14,6 +14,7 @@ use crate::ipc::wire::V2Request;
 
 /// Env var the shell integration injects with the caller's surface id.
 pub const SURFACE_ID_ENV: &str = "OPTIMUS_SURFACE_ID";
+pub const CALLER_CAPABILITY_ENV: &str = "OPTIMUS_CALLER_CAPABILITY";
 
 /// A file the invocation wants written locally (hook installer output).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +72,8 @@ fn usage() -> String {
         "  log <message…>",
         "  ping | capabilities",
         "  auth login --password <p>",
+        "  memory record --kind <decision|change|status|error> --fact <text> [--why <text>] [--file <path>] [--reverses <id>] [--define <symbol>] [--reference <symbol>]",
+        "  memory dump [--limit <1..500>] [--before <record-id>]",
         "  hooks <agent> <event>            (runtime; called by installed hooks)",
         "  hooks install <agent> [--dir <d>]",
         "  hooks print <agent> [--format ps1|cmd]",
@@ -138,12 +141,15 @@ pub fn parse(
         "report_git_branch" | "report-git-branch" => parse_report_git_branch(&tail, get_env),
         "report_pr" | "report-pr" => parse_report_pr(&tail, get_env),
         "report_pwd" | "report-pwd" => parse_report_pwd(&tail, get_env),
-        "set-status" | "set_status" => parse_single_string(&tail, "set-status", "status"),
-        "set-progress" | "set_progress" => parse_single_string(&tail, "set-progress", "progress"),
+        "set-status" | "set_status" => parse_scoped_string(&tail, "set-status", "status", get_env),
+        "set-progress" | "set_progress" => {
+            parse_scoped_string(&tail, "set-progress", "progress", get_env)
+        }
         "log" => parse_single_string(&tail, "log", "message"),
         "ping" => Ok(single(v2("system.ping", Map::new()))),
         "capabilities" => Ok(single(v2("system.capabilities", Map::new()))),
         "auth" => parse_auth(&tail),
+        "memory" => parse_memory(&tail, get_env),
         "hooks" => hooks::parse(&tail, get_env, stdin),
         other => Err(CliError::new(format!(
             "unknown command \"{other}\"\n{}",
@@ -156,6 +162,166 @@ pub fn parse(
         variant,
         ..inv
     })
+}
+
+fn parse_memory(
+    args: &[&str],
+    get_env: &dyn Fn(&str) -> Option<String>,
+) -> Result<CliInvocation, CliError> {
+    let operation = args
+        .first()
+        .ok_or_else(|| CliError::new("memory: expected record or dump"))?;
+    let surface = try_resolve_surface(None, get_env)
+        .ok_or_else(|| CliError::new("memory: OPTIMUS_SURFACE_ID is required"))?;
+    let capability = get_env(CALLER_CAPABILITY_ENV)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CliError::new("memory: OPTIMUS_CALLER_CAPABILITY is required"))?;
+    match *operation {
+        "record" => parse_memory_record(&args[1..], &surface, &capability),
+        "dump" => parse_memory_dump(&args[1..], &surface, &capability),
+        other => Err(CliError::new(format!(
+            "memory: unknown operation \"{other}\""
+        ))),
+    }
+}
+
+fn parse_memory_record(
+    args: &[&str],
+    surface: &str,
+    capability: &str,
+) -> Result<CliInvocation, CliError> {
+    let (mut kind, mut fact, mut why, mut file_key, mut reverses) = (None, None, None, None, None);
+    let mut defines = Vec::new();
+    let mut references = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let value = |offset: usize, flag: &str| {
+            args.get(index + offset)
+                .copied()
+                .ok_or_else(|| CliError::new(format!("memory record: {flag} needs a value")))
+        };
+        match args[index] {
+            "--kind" => {
+                kind = Some(value(1, "--kind")?);
+                index += 1;
+            }
+            "--fact" => {
+                fact = Some(value(1, "--fact")?);
+                index += 1;
+            }
+            "--why" => {
+                why = Some(value(1, "--why")?);
+                index += 1;
+            }
+            "--file" => {
+                file_key = Some(value(1, "--file")?);
+                index += 1;
+            }
+            "--reverses" => {
+                let raw = value(1, "--reverses")?;
+                reverses = Some(
+                    raw.parse::<i64>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(|| {
+                            CliError::new("memory record: --reverses must be a positive integer")
+                        })?,
+                );
+                index += 1;
+            }
+            "--define" => {
+                defines.push(value(1, "--define")?);
+                index += 1;
+            }
+            "--reference" => {
+                references.push(value(1, "--reference")?);
+                index += 1;
+            }
+            other => {
+                return Err(CliError::new(format!(
+                    "memory record: unexpected argument \"{other}\""
+                )))
+            }
+        }
+        index += 1;
+    }
+    let kind = kind.ok_or_else(|| CliError::new("memory record: --kind is required"))?;
+    if !matches!(kind, "decision" | "change" | "status" | "error") {
+        return Err(CliError::new(
+            "memory record: --kind must be decision, change, status, or error",
+        ));
+    }
+    let fact = fact
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CliError::new("memory record: --fact is required"))?;
+    let mut params = Map::new();
+    params.insert("surface_id".to_string(), json!(surface));
+    params.insert("caller_capability".to_string(), json!(capability));
+    params.insert("kind".to_string(), json!(kind));
+    params.insert("fact".to_string(), json!(fact));
+    if let Some(value) = why {
+        params.insert("why".to_string(), json!(value));
+    }
+    if let Some(value) = file_key {
+        params.insert("file_key".to_string(), json!(value));
+    }
+    if let Some(value) = reverses {
+        params.insert("reverses".to_string(), json!(value));
+    }
+    params.insert("defines".to_string(), json!(defines));
+    params.insert("references".to_string(), json!(references));
+    Ok(single(v2("memory.record", params)))
+}
+
+fn parse_memory_dump(
+    args: &[&str],
+    surface: &str,
+    capability: &str,
+) -> Result<CliInvocation, CliError> {
+    let (mut limit, mut before) = (None, None);
+    let mut index = 0;
+    while index < args.len() {
+        let raw = args
+            .get(index + 1)
+            .copied()
+            .ok_or_else(|| CliError::new("memory dump: option needs a value"))?;
+        match args[index] {
+            "--limit" => {
+                limit = Some(
+                    raw.parse::<usize>()
+                        .ok()
+                        .filter(|value| (1..=500).contains(value))
+                        .ok_or_else(|| CliError::new("memory dump: --limit must be 1..500"))?,
+                );
+            }
+            "--before" => {
+                before = Some(
+                    raw.parse::<i64>()
+                        .ok()
+                        .filter(|value| *value > 0)
+                        .ok_or_else(|| {
+                            CliError::new("memory dump: --before must be a positive integer")
+                        })?,
+                );
+            }
+            other => {
+                return Err(CliError::new(format!(
+                    "memory dump: unexpected argument \"{other}\""
+                )))
+            }
+        }
+        index += 2;
+    }
+    let mut params = Map::new();
+    params.insert("surface_id".to_string(), json!(surface));
+    params.insert("caller_capability".to_string(), json!(capability));
+    if let Some(value) = limit {
+        params.insert("limit".to_string(), json!(value));
+    }
+    if let Some(value) = before {
+        params.insert("before_id".to_string(), json!(value));
+    }
+    Ok(single(v2("memory.dump", params)))
 }
 
 fn parse_notify(
@@ -458,6 +624,26 @@ fn parse_single_string(
     Ok(single(v2(method, p)))
 }
 
+fn parse_scoped_string(
+    args: &[&str],
+    method: &str,
+    field: &str,
+    get_env: &dyn Fn(&str) -> Option<String>,
+) -> Result<CliInvocation, CliError> {
+    if args.is_empty() {
+        return Err(CliError::new(format!("{method}: expected <{field}â€¦>")));
+    }
+    let mut params = Map::new();
+    params.insert(field.into(), json!(args.join(" ")));
+    if let Some(surface) = try_resolve_surface(None, get_env) {
+        params.insert("surface_id".into(), json!(surface));
+    }
+    if let Some(capability) = get_env(CALLER_CAPABILITY_ENV).filter(|value| !value.is_empty()) {
+        params.insert("caller_capability".into(), json!(capability));
+    }
+    Ok(single(v2(method, params)))
+}
+
 fn parse_auth(args: &[&str]) -> Result<CliInvocation, CliError> {
     if args.first() == Some(&"login") {
         let mut password: Option<String> = None;
@@ -683,6 +869,115 @@ mod tests {
         ));
         assert_eq!(root["method"], "set-status");
         assert_eq!(root["params"]["status"], "codex: running tests");
+    }
+
+    #[test]
+    fn set_status_inherits_the_calling_surface() {
+        let root = single_frame(&parse_ok(
+            &["set-status", "running"],
+            &env(&[
+                (SURFACE_ID_ENV, "S23"),
+                (CALLER_CAPABILITY_ENV, "agent-capability"),
+            ]),
+        ));
+        assert_eq!(root["params"]["surface_id"], "S23");
+        assert_eq!(root["params"]["caller_capability"], "agent-capability");
+    }
+
+    #[test]
+    fn memory_record_uses_only_environment_identity_and_preserves_metadata() {
+        let root = single_frame(&parse_ok(
+            &[
+                "memory",
+                "record",
+                "--kind",
+                "decision",
+                "--fact",
+                "Use structured output",
+                "--why",
+                "Avoid brittle parsing",
+                "--file",
+                "shell/src/main.rs",
+                "--reverses",
+                "42",
+                "--define",
+                "ControlCapture",
+                "--reference",
+                "MemoryStore",
+            ],
+            &env(&[
+                (SURFACE_ID_ENV, "S24"),
+                (CALLER_CAPABILITY_ENV, "memory-capability"),
+            ]),
+        ));
+        assert_eq!(root["method"], "memory.record");
+        let params = &root["params"];
+        assert_eq!(params["surface_id"], "S24");
+        assert_eq!(params["caller_capability"], "memory-capability");
+        assert_eq!(params["kind"], "decision");
+        assert_eq!(params["fact"], "Use structured output");
+        assert_eq!(params["why"], "Avoid brittle parsing");
+        assert_eq!(params["file_key"], "shell/src/main.rs");
+        assert_eq!(params["reverses"], 42);
+        assert_eq!(params["defines"], json!(["ControlCapture"]));
+        assert_eq!(params["references"], json!(["MemoryStore"]));
+        assert!(params.get("agent_id").is_none());
+        assert!(params.get("workspace_id").is_none());
+        assert!(params.get("trust").is_none());
+    }
+
+    #[test]
+    fn memory_dump_is_scoped_by_environment_and_bounded() {
+        let root = single_frame(&parse_ok(
+            &["memory", "dump", "--limit", "500", "--before", "73"],
+            &env(&[
+                (SURFACE_ID_ENV, "S25"),
+                (CALLER_CAPABILITY_ENV, "dump-capability"),
+            ]),
+        ));
+        assert_eq!(root["method"], "memory.dump");
+        assert_eq!(root["params"]["surface_id"], "S25");
+        assert_eq!(root["params"]["caller_capability"], "dump-capability");
+        assert_eq!(root["params"]["limit"], 500);
+        assert_eq!(root["params"]["before_id"], 73);
+
+        assert!(parse(
+            &["memory", "dump", "--limit", "501"],
+            &env(&[
+                (SURFACE_ID_ENV, "S25"),
+                (CALLER_CAPABILITY_ENV, "dump-capability"),
+            ]),
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn memory_commands_require_environment_capability_and_reject_identity_flags() {
+        assert!(parse(
+            &["memory", "record", "--kind", "status", "--fact", "busy"],
+            &env(&[(SURFACE_ID_ENV, "S26")]),
+            None,
+        )
+        .is_err());
+        assert!(parse(
+            &[
+                "memory",
+                "record",
+                "--kind",
+                "status",
+                "--fact",
+                "busy",
+                "--agent-id",
+                "other-agent",
+            ],
+            &env(&[
+                (SURFACE_ID_ENV, "S26"),
+                (CALLER_CAPABILITY_ENV, "capability"),
+            ]),
+            None,
+        )
+        .is_err());
     }
 
     #[test]

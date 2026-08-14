@@ -9,6 +9,8 @@
 // Loaded ONLY when window.__TAURI__ is missing (see the guard in index.html); the real app never
 // runs this.
 
+import { createControlPlaneFixture } from "../control-plane-fixture.js";
+
 // ---- Channel ------------------------------------------------------------------------------------
 
 class Channel {
@@ -267,6 +269,57 @@ function toast(title, subtitle, body) {
   push(toastChannel, [{ title, subtitle: subtitle || "", body: body || "", flash: false }]);
 }
 
+// ---- Control-plane state ------------------------------------------------------------------------
+
+let controlSnapshot = createControlPlaneFixture();
+let controlChannel = null;
+let nextControlSession = 3;
+let nextControlAgent = 7;
+
+function emitControlUpdate() {
+  controlSnapshot.revision += 1;
+  controlSnapshot.generatedAt += 1_000;
+  push(controlChannel, { revision: controlSnapshot.revision });
+}
+
+const controlMock = {
+  snapshot: () => structuredClone(controlSnapshot),
+  updateAgent(id, patch) {
+    Object.assign(controlSnapshot.agents.find((agent) => agent.id === id), patch);
+    recalculateControlTotals();
+    emitControlUpdate();
+  },
+  appendActivity(item) {
+    const id = Math.max(0, ...controlSnapshot.activity.map((entry) => entry.id)) + 1;
+    controlSnapshot.activity.unshift({
+      id,
+      workspaceId: "ws-1",
+      agentId: "agent-1",
+      kind: "status",
+      fact: "Live update",
+      fileKey: null,
+      branch: "feat/control-plane-foundation",
+      trust: "trusted",
+      timestamp: controlSnapshot.generatedAt + 1_000,
+      hasProvenance: false,
+      ...item,
+    });
+    emitControlUpdate();
+    return id;
+  },
+  emitRevision: emitControlUpdate,
+};
+
+function recalculateControlTotals() {
+  controlSnapshot.totals = {
+    running: controlSnapshot.agents.filter((agent) => agent.state === "running").length,
+    stalled: controlSnapshot.agents.filter((agent) => agent.state === "stalled").length,
+    waiting: controlSnapshot.agents.filter((agent) => agent.state === "waiting").length,
+    done: controlSnapshot.agents.filter((agent) => agent.state === "done").length,
+    failed: controlSnapshot.agents.filter((agent) => ["failed", "interrupted"].includes(agent.state)).length,
+  };
+}
+
 // ---- invoke -------------------------------------------------------------------------------------
 
 async function invoke(cmd, args = {}) {
@@ -297,6 +350,73 @@ async function invoke(cmd, args = {}) {
       toastChannel = args.onToast;
       setTimeout(() => toast("Agent finished", "optimus", "cargo test — 291 passed"), 1200);
       return;
+    case "control_plane_snapshot":
+      return structuredClone(controlSnapshot);
+    case "listen_control_plane":
+      controlChannel = args.onUpdate;
+      push(controlChannel, { revision: controlSnapshot.revision });
+      return controlSnapshot.revision;
+    case "control_session_start": {
+      const id = nextControlSession++;
+      controlSnapshot.sessions.push({
+        id: `session-${id}`,
+        workspaceId: "ws-1",
+        name: args.name,
+        baseCommit: "c1fb05fc0ab8f3d982c57eef481c4c6fc0c74462",
+        state: "active",
+        createdAt: controlSnapshot.generatedAt,
+      });
+      emitControlUpdate();
+      return { id };
+    }
+    case "control_agent_prepare": {
+      const numericId = nextControlAgent++;
+      const id = `agent-${numericId}`;
+      controlSnapshot.agents.push({
+        id,
+        sessionId: `session-${args.sessionId}`,
+        workspaceId: "ws-1",
+        parentId: args.parentId ? `agent-${args.parentId}` : null,
+        name: args.name,
+        task: args.task,
+        kind: args.kind,
+        state: "waiting",
+        status: "Preparing worktree",
+        branch: args.branch,
+        worktree: `C:\\dev\\Optimus\\.worktrees\\optimus\\session-${args.sessionId}\\${id}`,
+        baseCommit: "c1fb05fc0ab8",
+        baseDrift: false,
+        startedAt: null,
+        elapsedMs: 0,
+        lastActivityAt: null,
+        contradictionCount: 0,
+      });
+      recalculateControlTotals();
+      emitControlUpdate();
+      return { id: numericId };
+    }
+    case "control_agent_start": {
+      const agent = controlSnapshot.agents.find((item) => item.id === `agent-${args.agentId}`);
+      if (agent) {
+        agent.state = "running";
+        agent.status = "Agent started";
+        agent.startedAt = controlSnapshot.generatedAt;
+        agent.lastActivityAt = controlSnapshot.generatedAt;
+      }
+      recalculateControlTotals();
+      emitControlUpdate();
+      return { id: args.agentId };
+    }
+    case "control_agent_stop": {
+      const agent = controlSnapshot.agents.find((item) => item.id === `agent-${args.agentId}`);
+      if (agent) {
+        agent.state = "done";
+        agent.status = "Stopped";
+      }
+      recalculateControlTotals();
+      emitControlUpdate();
+      return { id: args.agentId };
+    }
     case "select_workspace":
       sidebar.forEach((r) => (r.is_selected = r.id === args.id));
       return treeView();
@@ -379,6 +499,7 @@ const core = { invoke, Channel };
 // Browser: install the global the frontend reads. Node (self-check): skip the DOM, just export.
 if (typeof window !== "undefined") {
   window.__TAURI__ = { core };
+  window.__OPTIMUS_MOCK__ = controlMock;
   console.log("[tauri-mock] installed — chrome runs without Tauri");
 }
-export { core, treeView };
+export { controlMock, core, treeView };

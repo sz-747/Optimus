@@ -7,6 +7,7 @@
 //! Divergence from C#: notification ids are the domain's `NotificationId(u64)` (a P2 decision),
 //! not `Guid`. The wire parses a `u64` id; no C# router test exercised the id path.
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::domain::ids::SurfaceId;
@@ -18,6 +19,36 @@ const PARSE_ERROR_CODE: &str = "parse_error";
 const METHOD_NOT_FOUND_CODE: &str = "method_not_found";
 const INVALID_PARAMS_CODE: &str = "invalid_params";
 const AUTH_REQUIRED_CODE: &str = "auth_required";
+const CALLER_UNAUTHORIZED_CODE: &str = "caller_unauthorized";
+const INTERNAL_ERROR_CODE: &str = "internal_error";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SocketEffectError {
+    Unauthorized,
+    InvalidInput(String),
+    Internal,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryRecordCommand {
+    pub surface: SurfaceId,
+    pub caller_capability: String,
+    pub fact: String,
+    pub why: Option<String>,
+    pub kind: String,
+    pub file_key: Option<String>,
+    pub reverses: Option<i64>,
+    pub defines: Vec<String>,
+    pub references: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryDumpCommand {
+    pub surface: SurfaceId,
+    pub caller_capability: String,
+    pub limit: usize,
+    pub before_id: Option<i64>,
+}
 
 /// Socket-command effect surface (Core/U4): handlers call this instead of touching the UI, so
 /// dispatch stays fully unit-testable. Methods take `&self`; a real implementation uses interior
@@ -59,8 +90,32 @@ pub trait SocketEffects {
     fn notification_open(&self, id: NotificationId);
     fn jump_to_unread(&self) -> bool;
 
-    fn set_status(&self, status: &str);
-    fn set_progress(&self, progress: &str);
+    fn set_status(&self, surface: Option<SurfaceId>, status: &str);
+    fn set_progress(&self, surface: Option<SurfaceId>, progress: &str);
+    fn set_status_authenticated(
+        &self,
+        surface: Option<SurfaceId>,
+        status: &str,
+        _caller_capability: Option<&str>,
+    ) -> Result<(), SocketEffectError> {
+        self.set_status(surface, status);
+        Ok(())
+    }
+    fn set_progress_authenticated(
+        &self,
+        surface: Option<SurfaceId>,
+        progress: &str,
+        _caller_capability: Option<&str>,
+    ) -> Result<(), SocketEffectError> {
+        self.set_progress(surface, progress);
+        Ok(())
+    }
+    fn memory_record(&self, _command: MemoryRecordCommand) -> Result<Value, SocketEffectError> {
+        Err(SocketEffectError::Internal)
+    }
+    fn memory_dump(&self, _command: MemoryDumpCommand) -> Result<Value, SocketEffectError> {
+        Err(SocketEffectError::Internal)
+    }
     fn log_line(&self, line: &str);
     fn sidebar_state(&self, payload: &str);
 
@@ -169,6 +224,8 @@ fn dispatch_v2(
         methods::SURFACE_SEND_KEY => handle_surface_send_key(request, effects),
         methods::SET_STATUS => handle_set_status_v2(request, effects),
         methods::SET_PROGRESS => handle_set_progress_v2(request, effects),
+        methods::MEMORY_RECORD => handle_memory_record_v2(request, effects),
+        methods::MEMORY_DUMP => handle_memory_dump_v2(request, effects),
         methods::LOG_LINE => handle_log_v2(request, effects),
         methods::SIDEBAR_STATE => handle_sidebar_state_v2(request, effects),
         methods::LIST_NOTIFICATIONS => ok(
@@ -333,12 +390,12 @@ fn handle_jump_to_unread(effects: &dyn SocketEffects) -> String {
 }
 
 fn handle_set_status(args: &str, effects: &dyn SocketEffects) -> String {
-    effects.set_status(args);
+    effects.set_status(None, args);
     wire::serialize_v1_response("OK")
 }
 
 fn handle_set_progress(args: &str, effects: &dyn SocketEffects) -> String {
-    effects.set_progress(args);
+    effects.set_progress(None, args);
     wire::serialize_v1_response("OK")
 }
 
@@ -408,6 +465,31 @@ fn handle_report_pwd(args: &str, effects: &dyn SocketEffects) -> String {
 
 // ---- V2 handlers ------------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemoryRecordParams {
+    surface_id: String,
+    caller_capability: String,
+    fact: String,
+    why: Option<String>,
+    kind: String,
+    file_key: Option<String>,
+    reverses: Option<i64>,
+    #[serde(default)]
+    defines: Vec<String>,
+    #[serde(default)]
+    references: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MemoryDumpParams {
+    surface_id: String,
+    caller_capability: String,
+    limit: Option<usize>,
+    before_id: Option<i64>,
+}
+
 fn handle_notify_v2(request: &V2Request, effects: &dyn SocketEffects) -> String {
     let Some(surface) = surface_from_params(&request.params) else {
         return err(request, INVALID_PARAMS_CODE, "Missing surface_id.");
@@ -474,16 +556,118 @@ fn handle_set_status_v2(request: &V2Request, effects: &dyn SocketEffects) -> Str
     let Some(status) = string_param(&request.params, "status") else {
         return err(request, INVALID_PARAMS_CODE, "Missing status.");
     };
-    effects.set_status(&status);
-    ok(request, json!({ "ok": true }))
+    let surface = match optional_surface_param(&request.params) {
+        Ok(surface) => surface,
+        Err(()) => return err(request, INVALID_PARAMS_CODE, "Invalid surface_id."),
+    };
+    let capability = string_param(&request.params, "caller_capability");
+    match effects.set_status_authenticated(surface, &status, capability.as_deref()) {
+        Ok(()) => ok(request, json!({ "ok": true })),
+        Err(error) => effect_error(request, error),
+    }
 }
 
 fn handle_set_progress_v2(request: &V2Request, effects: &dyn SocketEffects) -> String {
     let Some(progress) = string_param(&request.params, "progress") else {
         return err(request, INVALID_PARAMS_CODE, "Missing progress.");
     };
-    effects.set_progress(&progress);
-    ok(request, json!({ "ok": true }))
+    let surface = match optional_surface_param(&request.params) {
+        Ok(surface) => surface,
+        Err(()) => return err(request, INVALID_PARAMS_CODE, "Invalid surface_id."),
+    };
+    let capability = string_param(&request.params, "caller_capability");
+    match effects.set_progress_authenticated(surface, &progress, capability.as_deref()) {
+        Ok(()) => ok(request, json!({ "ok": true })),
+        Err(error) => effect_error(request, error),
+    }
+}
+
+fn handle_memory_record_v2(request: &V2Request, effects: &dyn SocketEffects) -> String {
+    let params = match serde_json::from_value::<MemoryRecordParams>(request.params.clone()) {
+        Ok(params) => params,
+        Err(_) => {
+            return err(
+                request,
+                INVALID_PARAMS_CODE,
+                "Invalid memory.record parameters.",
+            )
+        }
+    };
+    let Some(surface) = parse_surface_id(&params.surface_id) else {
+        return err(request, INVALID_PARAMS_CODE, "Invalid surface_id.");
+    };
+    if params.caller_capability.is_empty()
+        || params.fact.is_empty()
+        || params.reverses.is_some_and(|value| value <= 0)
+    {
+        return err(
+            request,
+            INVALID_PARAMS_CODE,
+            "Invalid memory.record parameters.",
+        );
+    }
+    let command = MemoryRecordCommand {
+        surface,
+        caller_capability: params.caller_capability,
+        fact: params.fact,
+        why: params.why,
+        kind: params.kind,
+        file_key: params.file_key,
+        reverses: params.reverses,
+        defines: params.defines,
+        references: params.references,
+    };
+    match effects.memory_record(command) {
+        Ok(result) => ok(request, result),
+        Err(error) => effect_error(request, error),
+    }
+}
+
+fn handle_memory_dump_v2(request: &V2Request, effects: &dyn SocketEffects) -> String {
+    let params = match serde_json::from_value::<MemoryDumpParams>(request.params.clone()) {
+        Ok(params) => params,
+        Err(_) => {
+            return err(
+                request,
+                INVALID_PARAMS_CODE,
+                "Invalid memory.dump parameters.",
+            )
+        }
+    };
+    let Some(surface) = parse_surface_id(&params.surface_id) else {
+        return err(request, INVALID_PARAMS_CODE, "Invalid surface_id.");
+    };
+    if params.caller_capability.is_empty() || params.before_id.is_some_and(|value| value <= 0) {
+        return err(
+            request,
+            INVALID_PARAMS_CODE,
+            "Invalid memory.dump parameters.",
+        );
+    }
+    let command = MemoryDumpCommand {
+        surface,
+        caller_capability: params.caller_capability,
+        limit: params.limit.unwrap_or(100).clamp(1, 500),
+        before_id: params.before_id,
+    };
+    match effects.memory_dump(command) {
+        Ok(result) => ok(request, result),
+        Err(error) => effect_error(request, error),
+    }
+}
+
+fn effect_error(request: &V2Request, error: SocketEffectError) -> String {
+    match error {
+        SocketEffectError::Unauthorized => err(
+            request,
+            CALLER_UNAUTHORIZED_CODE,
+            "Caller capability is not authorized.",
+        ),
+        SocketEffectError::InvalidInput(message) => err(request, INVALID_PARAMS_CODE, &message),
+        SocketEffectError::Internal => {
+            err(request, INTERNAL_ERROR_CODE, "The memory operation failed.")
+        }
+    }
 }
 
 fn handle_log_v2(request: &V2Request, effects: &dyn SocketEffects) -> String {
@@ -758,6 +942,17 @@ fn surface_from_params(params: &Value) -> Option<SurfaceId> {
         .and_then(parse_surface_id)
 }
 
+fn optional_surface_param(params: &Value) -> Result<Option<SurfaceId>, ()> {
+    let Some(object) = params.as_object() else {
+        return Ok(None);
+    };
+    let Some(raw) = object.get("surface_id").or_else(|| object.get("surface")) else {
+        return Ok(None);
+    };
+    let value = raw.as_str().ok_or(())?;
+    parse_surface_id(value).map(Some).ok_or(())
+}
+
 /// Port of `TryGetStringParam`: a JSON string (incl. empty) is taken verbatim; JSON `null` yields
 /// `None` (the null-hardening); other scalars stringify.
 fn string_param(params: &Value, name: &str) -> Option<String> {
@@ -830,6 +1025,8 @@ mod tests {
         dismiss_all_read_called: Cell<bool>,
         sent_surface: Cell<Option<SurfaceId>>,
         sent_text: RefCell<String>,
+        memory_record: RefCell<Option<MemoryRecordCommand>>,
+        memory_dump: RefCell<Option<MemoryDumpCommand>>,
     }
 
     impl SocketEffects for FakeSocketEffects {
@@ -891,8 +1088,19 @@ mod tests {
         fn jump_to_unread(&self) -> bool {
             true
         }
-        fn set_status(&self, _status: &str) {}
-        fn set_progress(&self, _progress: &str) {}
+        fn set_status(&self, _surface: Option<SurfaceId>, _status: &str) {}
+        fn set_progress(&self, _surface: Option<SurfaceId>, _progress: &str) {}
+        fn memory_record(&self, command: MemoryRecordCommand) -> Result<Value, SocketEffectError> {
+            if command.caller_capability == "deny" {
+                return Err(SocketEffectError::Unauthorized);
+            }
+            *self.memory_record.borrow_mut() = Some(command);
+            Ok(json!({ "record_id": 91 }))
+        }
+        fn memory_dump(&self, command: MemoryDumpCommand) -> Result<Value, SocketEffectError> {
+            *self.memory_dump.borrow_mut() = Some(command);
+            Ok(json!({ "records": [] }))
+        }
         fn log_line(&self, _line: &str) {}
         fn sidebar_state(&self, _payload: &str) {}
         fn report_git_branch(&self, _surface: SurfaceId, _branch: &str, _is_dirty: bool) {}
@@ -1107,6 +1315,96 @@ mod tests {
         let doc = parse(&response);
         assert_eq!(doc["ok"], json!(false));
         assert_eq!(doc["error"]["code"], json!("invalid_params"));
+    }
+
+    #[test]
+    fn set_status_with_invalid_surface_returns_invalid_params() {
+        let response = dispatch(
+            r#"{"id":"13","method":"set-status","params":{"status":"busy","surface_id":"not-a-surface"}}"#,
+            &FakeSocketEffects::default(),
+            AuthState::UNPROTECTED,
+        );
+        let doc = parse(&response);
+        assert_eq!(doc["error"]["code"], json!("invalid_params"));
+    }
+
+    #[test]
+    fn memory_record_dispatches_a_strict_typed_command() {
+        let effects = FakeSocketEffects::default();
+        let response = dispatch(
+            r#"{"id":"20","method":"memory.record","params":{"surface_id":"S7","caller_capability":"cap","kind":"decision","fact":"Keep auth local","why":"Reduce exposure","file_key":"relay/auth.js","reverses":4,"defines":["RelayAuth"],"references":["Cookie"]}}"#,
+            &effects,
+            AuthState::UNPROTECTED,
+        );
+        let doc = parse(&response);
+        assert_eq!(doc["ok"], json!(true));
+        assert_eq!(doc["result"]["record_id"], json!(91));
+        assert_eq!(
+            *effects.memory_record.borrow(),
+            Some(MemoryRecordCommand {
+                surface: SurfaceId(7),
+                caller_capability: "cap".to_string(),
+                fact: "Keep auth local".to_string(),
+                why: Some("Reduce exposure".to_string()),
+                kind: "decision".to_string(),
+                file_key: Some("relay/auth.js".to_string()),
+                reverses: Some(4),
+                defines: vec!["RelayAuth".to_string()],
+                references: vec!["Cookie".to_string()],
+            })
+        );
+    }
+
+    #[test]
+    fn memory_record_rejects_identity_override_fields_without_calling_effects() {
+        let effects = FakeSocketEffects::default();
+        for field in [
+            r#""agent_id":"other""#,
+            r#""workspace_id":9"#,
+            r#""branch":"main""#,
+            r#""trust":"trusted""#,
+            r#""ts":1"#,
+            r#""parent_record":2"#,
+        ] {
+            let frame = format!(
+                r#"{{"id":"21","method":"memory.record","params":{{"surface_id":"S7","caller_capability":"cap","kind":"status","fact":"busy",{field}}}}}"#
+            );
+            let doc = parse(&dispatch(&frame, &effects, AuthState::UNPROTECTED));
+            assert_eq!(doc["error"]["code"], json!("invalid_params"));
+            assert!(effects.memory_record.borrow().is_none());
+        }
+    }
+
+    #[test]
+    fn memory_record_maps_caller_denial_to_a_stable_error() {
+        let response = dispatch(
+            r#"{"id":"22","method":"memory.record","params":{"surface_id":"S7","caller_capability":"deny","kind":"status","fact":"busy"}}"#,
+            &FakeSocketEffects::default(),
+            AuthState::UNPROTECTED,
+        );
+        let doc = parse(&response);
+        assert_eq!(doc["error"]["code"], json!("caller_unauthorized"));
+    }
+
+    #[test]
+    fn memory_dump_clamps_limit_and_preserves_pagination_cursor() {
+        let effects = FakeSocketEffects::default();
+        let response = dispatch(
+            r#"{"id":"23","method":"memory.dump","params":{"surface_id":"S8","caller_capability":"cap","limit":900,"before_id":72}}"#,
+            &effects,
+            AuthState::UNPROTECTED,
+        );
+        let doc = parse(&response);
+        assert_eq!(doc["ok"], json!(true));
+        assert_eq!(
+            *effects.memory_dump.borrow(),
+            Some(MemoryDumpCommand {
+                surface: SurfaceId(8),
+                caller_capability: "cap".to_string(),
+                limit: 500,
+                before_id: Some(72),
+            })
+        );
     }
 
     #[test]

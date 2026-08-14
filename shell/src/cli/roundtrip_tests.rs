@@ -111,10 +111,10 @@ impl SocketEffects for RecordingEffects {
         self.push("jump".into());
         true
     }
-    fn set_status(&self, status: &str) {
+    fn set_status(&self, _surface: Option<SurfaceId>, status: &str) {
         self.push(format!("status:{status}"));
     }
-    fn set_progress(&self, progress: &str) {
+    fn set_progress(&self, _surface: Option<SurfaceId>, progress: &str) {
         self.push(format!("progress:{progress}"));
     }
     fn log_line(&self, line: &str) {

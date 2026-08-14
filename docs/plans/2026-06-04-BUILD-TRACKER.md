@@ -49,6 +49,49 @@ historical record; do **not** re-execute completed or superseded WinUI units.
   P6-M1 pass. Until then `app/`, `tests/`, the old Inno installer, and C# build
   files remain a rollback reference, not the active implementation.
 
+### Web control-plane milestone (implemented and verified; merge pending)
+
+The requested web-version stop point is complete on
+`feat/control-plane-foundation`. These rows remain unchecked under R3 until the
+branch reaches `main`; unchecked here means merge pending, not implementation
+pending.
+
+- [ ] **control-plane CP0** - Durable local memory and completion capture:
+  caller-scoped `memory.record` / `memory.dump`, trusted lifecycle records,
+  bounded correlation metadata, secret-safe stop-time Git capture, retry jobs,
+  and restart discovery. Merge: _pending_.
+- [ ] **control-plane CP1** - Desktop execution layer: durable sessions and
+  agents, capacity-aware lifecycle supervision, provider profiles for either a
+  signed-in subscription or one approved API credential, and parallel sibling
+  worktrees pinned to the same base commit with disjoint file ownership. Merge:
+  _pending_.
+- [ ] **control-plane CP2** - Product-facing web dashboard: authenticated safe
+  snapshots, SSE live updates and reconnect control, desktop presence,
+  start/stop command acknowledgement, parallel-run authoring, command failure
+  feedback, and responsive desktop/tablet/mobile layouts. Merge: _pending_.
+- [ ] **control-plane CP3** - Production relay deployment: Vercel project
+  `sz-747s-projects/optimus`, Redis-backed atomic state and command leases,
+  separate dashboard/desktop credentials, hardened response headers, and live
+  end-to-end verification at `https://optimus-umber.vercel.app`. Merge:
+  _pending_. Runbook:
+  `docs/runbooks/2026-07-11-control-plane-vercel.md`.
+
+Manual Tauri crash/installer VM gates and legacy-stack deletion remain after
+this requested stop point. Continual-learning loops and the knowledge-graph
+wiki remain later product milestones; they are not silently claimed by CP0-CP3.
+
+Verification evidence (2026-07-11): deployment
+`dpl_GSddWTFYiNvazCZ15sJ5cffQVTWT` is Ready; live browser-to-Redis-to-desktop
+command acknowledgement and SSE revision delivery passed with deployed security
+headers. Gates: Rust workspace 390 passed; the release-only 100k-record test
+passed separately; relay Node 16/16; Tauri mock 1/1; local Playwright 6/6;
+relay Playwright 10/10; production Playwright 1/1; Vite build; Tauri release/NSIS
+build. Installer: `target/release/bundle/nsis/Optimus_0.1.0_x64-setup.exe`,
+SHA-256 `58E29F9D57AF867123CC8C49BD2DB0C6775709073B94D2AC557E20A614FB6CA6`.
+Vercel returned no error-level logs after the live smoke. Dashboard and desktop
+credentials were rotated after the final security review; superseded
+credential-bearing deployments were removed.
+
 ---
 
 ## MANDATORY RULES (do not soften)

@@ -5,7 +5,9 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::cli::parser::{try_resolve_surface, v2, CliError, CliInvocation, LocalFileWrite};
+use crate::cli::parser::{
+    try_resolve_surface, v2, CliError, CliInvocation, LocalFileWrite, CALLER_CAPABILITY_ENV,
+};
 
 /// One supported agent integration (ported from the macOS AgentHookDef model).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,8 +123,15 @@ fn parse_runtime(
         None => return Ok(CliInvocation::default()),
     };
 
+    let caller_capability = get_env(CALLER_CAPABILITY_ENV);
     Ok(CliInvocation {
-        frames: build_runtime_frames(agent, &hook_event.to_lowercase(), &surface_id, stdin),
+        frames: build_runtime_frames(
+            agent,
+            &hook_event.to_lowercase(),
+            &surface_id,
+            caller_capability.as_deref(),
+            stdin,
+        ),
         ..Default::default()
     })
 }
@@ -133,6 +142,7 @@ pub fn build_runtime_frames(
     agent: &AgentDef,
     hook_event: &str,
     surface_id: &str,
+    caller_capability: Option<&str>,
     stdin: Option<&str>,
 ) -> Vec<String> {
     match hook_event {
@@ -152,19 +162,30 @@ pub fn build_runtime_frames(
             p.insert("preferred_surface_id".into(), json!(surface_id));
             vec![v2("notification.create_for_caller", p)]
         }
-        "session-start" => vec![status_frame(agent, "start")],
-        "prompt-submit" => vec![status_frame(agent, "busy")],
-        "session-end" | "session-finalize" => vec![status_frame(agent, "idle")],
+        "session-start" => vec![status_frame(agent, "start", surface_id, caller_capability)],
+        "prompt-submit" => vec![status_frame(agent, "busy", surface_id, caller_capability)],
+        "session-end" | "session-finalize" => {
+            vec![status_frame(agent, "idle", surface_id, caller_capability)]
+        }
         _ => vec![],
     }
 }
 
-fn status_frame(agent: &AgentDef, state: &str) -> String {
+fn status_frame(
+    agent: &AgentDef,
+    state: &str,
+    surface_id: &str,
+    caller_capability: Option<&str>,
+) -> String {
     let mut p = Map::new();
     p.insert(
         "status".into(),
         json!(format!("{}:{}", agent.status_key, state)),
     );
+    p.insert("surface_id".into(), json!(surface_id));
+    if let Some(capability) = caller_capability {
+        p.insert("caller_capability".into(), json!(capability));
+    }
     v2("set-status", p)
 }
 
@@ -381,6 +402,7 @@ mod tests {
             let root = single_frame(&inv);
             assert_eq!(root["method"], "set-status");
             assert_eq!(root["params"]["status"], expected);
+            assert_eq!(root["params"]["surface_id"], "S1");
         }
     }
 

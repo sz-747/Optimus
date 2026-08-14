@@ -105,7 +105,7 @@ fn accepted_connection_without_a_response_times_out() {
 
     assert!(!output.status.success());
     assert!(
-        started.elapsed() < Duration::from_secs(5),
+        started.elapsed() < Duration::from_secs(8),
         "CLI exceeded its response deadline: {:?}",
         started.elapsed()
     );

@@ -48,6 +48,8 @@ pub mod methods {
     pub const SURFACE_SEND_KEY: &str = "surface.send_key";
     pub const SURFACE_FOCUS: &str = "surface.focus";
     pub const AUTH_LOGIN: &str = "auth.login";
+    pub const MEMORY_RECORD: &str = "memory.record";
+    pub const MEMORY_DUMP: &str = "memory.dump";
 
     // Authentication.
     pub const AUTH: &str = "auth";
