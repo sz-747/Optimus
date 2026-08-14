@@ -1,0 +1,15 @@
+:root {
+  --canvas: #0f151a;
+  --sidebar: #12191f;
+  --card: #182026;
+  --selected: #222b32;
+  --border: #2c363d;
+  --text: #e6e6e6;
+  --muted: #b2bac3;
+  --green: #6fd36c;
+  --blue: #68a7ff;
+  --amber: #ffbf42;
+  --purple: #c76bff;
+  --font-ui: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+}

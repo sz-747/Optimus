@@ -49,6 +49,28 @@ hunt for.
 > close a workspace to spawn more"). When the governor is unavailable the
 > indicator shows "— / — terminals" in calm grey.
 
+## Current Dashboard Frontend (2026-07-20)
+
+The visible shell is now a **mission-control dashboard**, implemented in
+`app/Dashboard/DashboardView.cs` from the supplied reference. This frontend replaces the visible
+split-tree chrome while preserving the terminal/session host in the visual tree, collapsed behind
+it. The dashboard must retain this hierarchy:
+
+- 54px integrated title bar with Optimus identity.
+- 338px left rail: safe capacity, workspace creation, grouped workspaces, and settings.
+- Selected-workspace heading and four equal summary cards: active agents, progress, open items,
+  and spend.
+- Main work area: agent orchestration graph on the left, time-ordered activity feed on the right.
+- Timeline and optional technical-details affordance at the bottom.
+
+The real `WorkspaceHost` remains the integration seam: dashboard workspace selection and creation
+route through it, preserving existing capacity governance and IPC. The safe-capacity meter renders
+the live `CapacityModel` snapshot (including warn/cap escalation). Workspace rows render the same
+immutable `SidebarRowDto` snapshots as the legacy sidebar; a reference label is only used until a
+new terminal reports live title/status metadata. Agent activity, open-item, and spend values have
+no current backend model, so their reference values remain presentation data until that contract
+exists; do not represent them as live telemetry.
+
 ## Aesthetic Direction
 - **Direction:** Industrial-utilitarian, near-black.
 - **Decoration level:** Minimal — flat surfaces, 1px hairline dividers, elevation by
@@ -71,8 +93,11 @@ hunt for.
   |-------|----|------|
   | `caption` | 10 | badge text, smallest meta |
   | `meta` | 11 | row metadata (branch · PR · status) |
-  | `body` | 12 | tab chip labels |
-  | `title` | 13 | sidebar row title (workspace name) |
+| `body` | 12 | tab chip labels |
+| `title` | 13 | sidebar row title (workspace name) |
+| `heading` | 16 | dashboard section and toolbar text |
+| `display` | 24 | selected-workspace heading |
+| `metric` | 26 | dashboard metric values |
 
 ## Color
 
@@ -87,6 +112,15 @@ the centralization plan in the Decisions Log.
 | `surface-2` | `#161616` | tab strip |
 | `surface-selected` | `#2D2D2D` | selected row / active tab chip |
 | `hairline` | `#2B2B2B` | dividers, split-tree gutters |
+
+### Dashboard surfaces
+| Token | Hex | Use |
+|---|---|---|
+| `DashboardCanvas` | `#0F151A` | title bar and main canvas |
+| `DashboardSidebar` | `#12191F` | dashboard left rail |
+| `DashboardCard` | `#182026` | summary and agent cards |
+| `DashboardSelected` | `#222B32` | selected workspace and icon wells |
+| `DashboardBorder` | `#2C363D` | card, row, and timeline borders |
 
 ### Text
 | Token | Hex | Use |

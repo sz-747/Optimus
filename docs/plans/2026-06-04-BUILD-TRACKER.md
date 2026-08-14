@@ -211,6 +211,16 @@ touches it — others stay disjoint.
 
 ---
 
+## Migration supersession
+
+New feature work no longer follows the remaining WinUI/WebView2 units in this tracker. Keep
+completed WinUI work as the compatibility oracle and execute P0 of
+`docs/plans/2026-07-20-001-tauri-migration-recovery.md` before any P1-P7 migration unit.
+P0 evidence is the successful `build/build.ps1 -VerifyMigration` gate plus a release
+`npx --prefix frontend tauri build --config shell/tauri.conf.json --no-bundle`. Once both pass,
+the next allowed execution unit is P1 engine slim-down in
+`docs/design/tauri-migration-plan.md`.
+
 ## Recommended serial path (single-session)
 
 If only one `/ce-work` session is running at a time, work in this order. It

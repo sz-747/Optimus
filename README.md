@@ -1,5 +1,10 @@
 # Optimus
 
+> **Migration status:** Optimus is moving from the legacy WinUI 3/.NET shell to a Tauri/Rust/web
+> desktop application. `app/`, `core/`, `cli/`, and `tests/` remain the compatibility oracle until
+> the migration's crash-safety gate passes; new product work belongs on the Tauri path described in
+> [the recovery plan](docs/plans/2026-07-20-001-tauri-migration-recovery.md).
+
 **Optimus is the terminal multiplexer that cannot crash your machine.** At startup
 it measures available system RAM, computes the maximum number of terminals it can
 host without exhausting memory, and locks that as a hard **safe-zone cap** — so
@@ -44,7 +49,25 @@ hooks).
 | `DESIGN.md` | "Graphite" design system — read before any chrome change |
 | `docs/runbooks/` | Operational runbooks, incl. the RAM safe-zone smoke test |
 
-## Build & test
+## Migration boundary
+
+The checked-in WinUI 3 + Rust/wgpu implementation is still the regression oracle. The shipping
+target is a Tauri desktop shell with a Rust in-process backend and web terminals. The active P0
+work lives in `shell/` and `frontend/`; do not add product features to the legacy shell while the
+migration is underway. The dashboard composition is captured in
+`docs/design/dashboard-reference.md`.
+
+## Tauri P0
+
+```powershell
+npm ci --prefix frontend
+npx --prefix frontend tauri dev --config shell/tauri.conf.json
+
+# Run the legacy oracle and the new migration checks together.
+.\build\build.ps1 -VerifyMigration
+```
+
+## Legacy oracle: build & test
 
 ```powershell
 # Engine first so the app picks up a fresh DLL

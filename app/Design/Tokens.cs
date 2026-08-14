@@ -34,6 +34,23 @@ internal static class Tokens
     /// <summary>`hairline` #2B2B2B — dividers; also the capacity bar's empty track and split gutters.</summary>
     public static readonly SolidColorBrush Hairline = Brush(0x2B, 0x2B, 0x2B);
 
+    // ---- Dashboard surfaces (reference dashboard, frontend-first) -----------------------------
+
+    /// <summary>Blue-black application canvas used by the new mission-control dashboard.</summary>
+    public static readonly SolidColorBrush DashboardCanvas = Brush(0x0F, 0x15, 0x1A);
+
+    /// <summary>Dashboard sidebar and top bar surface.</summary>
+    public static readonly SolidColorBrush DashboardSidebar = Brush(0x12, 0x19, 0x1F);
+
+    /// <summary>Raised dashboard card surface.</summary>
+    public static readonly SolidColorBrush DashboardCard = Brush(0x18, 0x20, 0x26);
+
+    /// <summary>Selected or subtly elevated dashboard surface.</summary>
+    public static readonly SolidColorBrush DashboardSelected = Brush(0x22, 0x2B, 0x32);
+
+    /// <summary>Low-contrast border used by dashboard cards, rows, and connectors.</summary>
+    public static readonly SolidColorBrush DashboardBorder = Brush(0x2C, 0x36, 0x3D);
+
     /// <summary>Fully transparent — for chip / button backgrounds that should not paint a surface.</summary>
     public static readonly SolidColorBrush Transparent = new(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
 
@@ -47,6 +64,9 @@ internal static class Tokens
 
     /// <summary>`text-on-accent` #FFFFFF — text/glyphs sitting on a colored badge.</summary>
     public static readonly SolidColorBrush TextOnAccent = Brush(0xFF, 0xFF, 0xFF);
+
+    /// <summary>Dashboard secondary copy â€” deliberately brighter than legacy metadata.</summary>
+    public static readonly SolidColorBrush TextSecondary = Brush(0xB2, 0xBA, 0xC3);
 
     // ---- Color: semantic (DESIGN.md "Semantic" — keep, maps to dev conventions) ----------------
 
@@ -75,6 +95,13 @@ internal static class Tokens
     /// "unread" so it never collides with <see cref="PrOpen"/> or <see cref="Attention"/>.</summary>
     public static readonly SolidColorBrush Unread = Brush(0xD8, 0x6F, 0xB0);
 
+    // ---- Dashboard status colors ---------------------------------------------------------------
+
+    public static readonly SolidColorBrush StatusGreen = Brush(0x6F, 0xD3, 0x6C);
+    public static readonly SolidColorBrush StatusBlue = Brush(0x68, 0xA7, 0xFF);
+    public static readonly SolidColorBrush StatusAmber = Brush(0xFF, 0xBF, 0x42);
+    public static readonly SolidColorBrush StatusPurple = Brush(0xC7, 0x6B, 0xFF);
+
     // ---- Color: capacity indicator (semantic aliases — DESIGN.md "Thesis") ---------------------
 
     /// <summary>Capacity below 75% of the safe zone — maps to `text-muted` (calm, recedes).</summary>
@@ -102,6 +129,15 @@ internal static class Tokens
 
     /// <summary>`title` 13px — sidebar row title.</summary>
     public const double FontTitle = 13;
+
+    /// <summary>Dashboard section and toolbar text.</summary>
+    public const double FontHeading = 16;
+
+    /// <summary>Dashboard workspace heading.</summary>
+    public const double FontDisplay = 24;
+
+    /// <summary>Large metric values in dashboard summary cards.</summary>
+    public const double FontMetric = 26;
 
     private static SolidColorBrush Brush(byte r, byte g, byte b) =>
         new(Color.FromArgb(0xFF, r, g, b));

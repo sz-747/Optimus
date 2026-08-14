@@ -5,6 +5,9 @@
 /engine/target/
 **/target/
 Cargo.lock.orig
+/frontend/node_modules/
+/frontend/dist/
+/shell/icons/icon-source.png
 
 # ── .NET / C# ──
 [Bb]in/

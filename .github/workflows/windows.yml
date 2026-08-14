@@ -1,0 +1,22 @@
+name: Windows verification
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Build and verify the migration boundary
+        shell: pwsh
+        run: ./build/build.ps1 -VerifyMigration

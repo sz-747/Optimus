@@ -1,38 +1,27 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Windowing;
 
 namespace Optimus;
 
 /// <summary>
-/// The single window, hosting a <see cref="Sidebar.WorkspaceHost"/> (the workspace sidebar beside
-/// the selected workspace's split tree — Phase 5). Forwards the focused surface's title to the
-/// window chrome and tears every engine down on close so render threads stop before their panels
-/// are disposed (plan §7.2 / R9).
+/// The single window hosting the frontend-first mission-control dashboard. The existing terminal
+/// workspace host is deliberately kept out of the visual tree while the dashboard is finished and
+/// verified; the later integration seam can attach it without recreating the chrome.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
+    /// <summary>The live terminal/session backend, retained offscreen while the dashboard owns chrome.</summary>
     public Sidebar.WorkspaceHost WorkspaceHost => Host;
 
     public MainWindow()
     {
         this.InitializeComponent();
         this.Title = "optimus";
-
-        Host.ActiveTitleChanged += OnTitleChanged;
-        this.Activated += OnActivated;
+        this.ExtendsContentIntoTitleBar = true;
+        this.SetTitleBar(Dashboard.TitleBarElement);
+        ApplyTitleBarTheme();
+        Dashboard.AttachBackend(Host);
         this.Closed += OnClosed;
-    }
-
-    private void OnTitleChanged(string title)
-    {
-        // Raised on the UI thread when the focused surface's title (or the focus) changes.
-        this.Title = string.IsNullOrEmpty(title) ? "optimus" : title;
-    }
-
-    private void OnActivated(object sender, WindowActivatedEventArgs args)
-    {
-        // A UserControl cannot read its window's activation, so push it down to the host (feeds
-        // the notification suppression rule R4). Deactivated == app is no longer foreground.
-        Host.AppFocused = args.WindowActivationState != WindowActivationState.Deactivated;
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
@@ -45,5 +34,20 @@ public sealed partial class MainWindow : Window
         // Last, mirroring launch order (governor starts before the window): stop the capacity
         // ticker, persist the learned calibration, and release the Win32 provider.
         app?.StopCapacityGovernor();
+    }
+
+    private void ApplyTitleBarTheme()
+    {
+        if (!AppWindowTitleBar.IsCustomizationSupported())
+        {
+            return;
+        }
+
+        AppWindow.TitleBar.ButtonBackgroundColor = Design.Tokens.DashboardCanvas.Color;
+        AppWindow.TitleBar.ButtonForegroundColor = Design.Tokens.TextSecondary.Color;
+        AppWindow.TitleBar.ButtonHoverBackgroundColor = Design.Tokens.DashboardSelected.Color;
+        AppWindow.TitleBar.ButtonHoverForegroundColor = Design.Tokens.TextPrimary.Color;
+        AppWindow.TitleBar.ButtonInactiveBackgroundColor = Design.Tokens.DashboardCanvas.Color;
+        AppWindow.TitleBar.ButtonInactiveForegroundColor = Design.Tokens.TextMuted.Color;
     }
 }

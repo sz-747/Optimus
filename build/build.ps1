@@ -21,6 +21,9 @@
 
 .PARAMETER EngineOnly
   Build only the Rust engine and stop (useful for regenerating bindings).
+
+.PARAMETER VerifyMigration
+  Run the legacy regression tests plus the Tauri shell and frontend checks after a normal build.
 #>
 [CmdletBinding()]
 param(
@@ -28,7 +31,8 @@ param(
     [string]$Configuration = 'Debug',
     [string]$Rid = 'win-x64',
     [switch]$Publish,
-    [switch]$EngineOnly
+    [switch]$EngineOnly,
+    [switch]$VerifyMigration
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,5 +89,47 @@ if ($Publish) {
 Write-Host "==> dotnet $($cliArgs -join ' ')" -ForegroundColor Cyan
 & dotnet @cliArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet $verb (cli) failed ($LASTEXITCODE)" }
+
+if ($VerifyMigration) {
+    $testsProj = Join-Path $repo 'tests\Optimus.Core.Tests.csproj'
+
+    Write-Host "==> cargo test -p optimus_engine" -ForegroundColor Cyan
+    Push-Location $repo
+    try {
+        & $cargo test -p optimus_engine
+        if ($LASTEXITCODE -ne 0) { throw "cargo test failed ($LASTEXITCODE)" }
+    }
+    finally {
+        Pop-Location
+    }
+
+    Write-Host "==> cargo fmt -p optimus-shell -- --check" -ForegroundColor Cyan
+    Push-Location $repo
+    try {
+        & $cargo fmt -p optimus-shell -- --check
+        if ($LASTEXITCODE -ne 0) { throw "Tauri shell formatting check failed ($LASTEXITCODE)" }
+    }
+    finally {
+        Pop-Location
+    }
+
+    Write-Host "==> dotnet test $testsProj" -ForegroundColor Cyan
+    & dotnet test $testsProj -c $Configuration -r $Rid -p:SkipOptimusEngineBuild=true
+    if ($LASTEXITCODE -ne 0) { throw "dotnet test failed ($LASTEXITCODE)" }
+
+    Write-Host "==> npm --prefix frontend test" -ForegroundColor Cyan
+    & npm --prefix (Join-Path $repo 'frontend') test
+    if ($LASTEXITCODE -ne 0) { throw "frontend test failed ($LASTEXITCODE)" }
+
+    Write-Host "==> cargo check -p optimus-shell" -ForegroundColor Cyan
+    Push-Location $repo
+    try {
+        & $cargo check -p optimus-shell
+        if ($LASTEXITCODE -ne 0) { throw "Tauri shell check failed ($LASTEXITCODE)" }
+    }
+    finally {
+        Pop-Location
+    }
+}
 
 Write-Host "==> done ($Configuration / $Rid / $verb)" -ForegroundColor Green

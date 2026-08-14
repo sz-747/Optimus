@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using Optimus.Core;
@@ -36,6 +37,13 @@ public sealed class WorkspaceHost : UserControl
 
     /// <summary>Raised when the selected workspace's focused surface title changes — drives window chrome.</summary>
     public event Action<string>? ActiveTitleChanged;
+
+    /// <summary>
+    /// Raised after workspace selection, creation, closing, or metadata changes. The dashboard
+    /// consumes this as a frontend-friendly refresh seam while the established sidebar keeps its
+    /// immutable projection boundary.
+    /// </summary>
+    public event Action? DashboardStateChanged;
 
     public WorkspaceHost()
     {
@@ -131,6 +139,7 @@ public sealed class WorkspaceHost : UserControl
             view.Visibility = id == _manager.SelectedId ? Visibility.Visible : Visibility.Collapsed;
         }
         RenderSidebar();
+        DashboardStateChanged?.Invoke();
         OnViewTitleChanged(_manager.SelectedId, _manager.Selected.Title);
     }
 
@@ -142,11 +151,32 @@ public sealed class WorkspaceHost : UserControl
         }
     }
 
-    private void RenderSidebar() =>
-        _sidebar.Render(SidebarProjection.Project(
+    private void RenderSidebar() => _sidebar.Render(DashboardRows);
+
+    /// <summary>
+    /// Immutable workspace snapshots shared by the legacy sidebar and dashboard frontend. Exposing
+    /// values rather than live <see cref="Workspace"/> instances preserves the app's snapshot
+    /// boundary while allowing both chrome surfaces to render the same backend state.
+    /// </summary>
+    internal ImmutableArray<SidebarRowDto> DashboardRows => SidebarProjection.Project(
             _manager,
             unreadOf: id => _views.TryGetValue(id, out WorkspaceView? v) ? v.UnreadCount : 0,
-            latestOf: id => _views.TryGetValue(id, out WorkspaceView? v) ? LatestText(v) : null));
+            latestOf: id => _views.TryGetValue(id, out WorkspaceView? v) ? LatestText(v) : null);
+
+    /// <summary>Number of real workspace sessions, for dashboard controls and affordance state.</summary>
+    public int WorkspaceCount => _manager.Workspaces.Count;
+
+    /// <summary>Creates a real workspace through the existing capacity-aware manager path.</summary>
+    public void CreateWorkspaceFromDashboard() => _manager.NewWorkspace();
+
+    /// <summary>Select a real workspace by its current sidebar order; dashboard-only helper.</summary>
+    public void SelectWorkspaceFromDashboard(int index)
+    {
+        if (index >= 0 && index < _manager.Workspaces.Count)
+        {
+            _manager.SelectWorkspace(_manager.Workspaces[index].Id);
+        }
+    }
 
     private static string? LatestText(WorkspaceView view)
     {

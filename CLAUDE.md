@@ -1,5 +1,12 @@
 # Optimus
 
+**Migration boundary:** Optimus is moving to a Tauri/Rust/web desktop app. The checked-in WinUI 3
+(C#) shell and Rust/wgpu engine are the compatibility oracle, not the target for new product work.
+New product surfaces belong in `shell/` and `frontend/`; changes under `app/`, `core/`, `cli/`, and
+`engine/` must preserve or repair legacy parity only until the P7 cutover in
+`docs/design/tauri-migration-plan.md`. See
+`docs/plans/2026-07-20-001-tauri-migration-recovery.md` for the active execution plan.
+
 Native Windows terminal multiplexer — WinUI 3 (C#) chrome over a Rust/wgpu engine.
 
 **Core differentiator (do not bury):** Optimus measures available system RAM at
